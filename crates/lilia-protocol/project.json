@@ -1,0 +1,15 @@
+{
+  "name": "lilia-protocol",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "crates/lilia-protocol/src",
+  "implicitDependencies": ["lilia-core"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-protocol" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-protocol" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-protocol --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-protocol --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo package -p lilia-protocol --allow-dirty --no-verify" } }
+  },
+  "tags": ["scope:transport", "type:library", "lang:rust"]
+}

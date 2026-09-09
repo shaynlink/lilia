@@ -1,0 +1,15 @@
+{
+  "name": "lilia-plugin-json",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "plugins/lilia-plugin-json/src",
+  "implicitDependencies": ["lilia-plugin-api"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-plugin-json" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-plugin-json" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-plugin-json --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-plugin-json --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-plugin-json --release" } }
+  },
+  "tags": ["scope:model", "type:plugin", "lang:rust"]
+}

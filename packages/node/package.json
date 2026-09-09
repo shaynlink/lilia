@@ -1,0 +1,21 @@
+{
+  "name": "@liliadb/node",
+  "version": "0.1.0",
+  "description": "Local-first multimodel database for Node.js",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "bench": "node -e \"console.log('benchmark harness pending calibrated runner')\"",
+    "package": "pnpm pack --pack-destination ../../dist"
+  },
+  "dependencies": { "@msgpack/msgpack": "3.1.2" },
+  "devDependencies": { "@types/node": "24.10.0", "typescript": "6.0.2" }
+}

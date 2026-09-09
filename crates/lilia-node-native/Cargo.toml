@@ -1,0 +1,23 @@
+[package]
+name = "lilia-node-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lilia-core = { path = "../lilia-core" }
+lilia-storage-sqlite = { path = "../lilia-storage-sqlite" }
+napi.workspace = true
+napi-derive.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[build-dependencies]
+napi-build = "2.2.3"
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+node_modules/
+/target/
+/.nx/
+dist/
+*.lilia
+*.lilia-shm
+*.lilia-wal
+*.sock
+*.token
+*.node
+.DS_Store

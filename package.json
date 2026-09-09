@@ -1,11 +1,23 @@
 {
-  "name": "lilia",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "name": "@liliadb/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=22"
   },
-  "author": "",
-  "license": "ISC"
+  "scripts": {
+    "build": "nx run-many -t build",
+    "test": "nx run-many -t test",
+    "lint": "nx run-many -t lint",
+    "bench": "nx run-many -t bench",
+    "graph": "nx graph",
+    "lilia": "cargo run -p lilia-cli --"
+  },
+  "devDependencies": {
+    "@nx/js": "23.2.0",
+    "nx": "23.2.0",
+    "typescript": "6.0.2"
+  }
 }
