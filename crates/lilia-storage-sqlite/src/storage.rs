@@ -55,6 +55,7 @@ pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 pub(crate) fn secure_database_file(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
