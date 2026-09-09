@@ -13,7 +13,7 @@ use lilia_storage_sqlite::{Database, DatabaseOptions};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "LiliaDB local daemon")]
@@ -130,7 +130,7 @@ async fn serve(
                 let shutdown = Arc::clone(&shutdown);
                 tokio::spawn(async move {
                     if let Err(error) = handle_stream(stream, database, &token, shutdown).await {
-                        warn!(%error, "client disconnected with error");
+                        tracing::warn!(%error, "client disconnected with error");
                     }
                 });
             }
