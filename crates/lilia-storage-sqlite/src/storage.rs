@@ -62,6 +62,8 @@ pub(crate) fn secure_database_file(path: &Path) -> Result<()> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
