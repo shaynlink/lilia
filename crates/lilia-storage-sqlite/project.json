@@ -1,0 +1,15 @@
+{
+  "name": "lilia-storage-sqlite",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "crates/lilia-storage-sqlite/src",
+  "implicitDependencies": ["lilia-core"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-storage-sqlite" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-storage-sqlite" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-storage-sqlite --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-storage-sqlite --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo package -p lilia-storage-sqlite --allow-dirty --no-verify" } }
+  },
+  "tags": ["scope:storage", "type:library", "lang:rust"]
+}

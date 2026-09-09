@@ -1,0 +1,15 @@
+{
+  "name": "lilia-cli",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/lilia-cli/src",
+  "implicitDependencies": ["lilia-core", "lilia-plugin-api", "lilia-protocol", "lilia-storage-sqlite"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-cli" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-cli" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-cli --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-cli --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-cli --release" } }
+  },
+  "tags": ["scope:cli", "type:application", "lang:rust"]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "lilia-node-native",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "crates/lilia-node-native/src",
+  "implicitDependencies": ["lilia-core", "lilia-storage-sqlite"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-node-native" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-node-native" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-node-native --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-node-native --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-node-native --release" } }
+  },
+  "tags": ["scope:bindings", "type:library", "lang:rust"]
+}
