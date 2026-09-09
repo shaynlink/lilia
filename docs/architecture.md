@@ -2,8 +2,9 @@
 
 ## Boundaries
 
-`lilia-core` owns database lifecycle, storage migrations, transactions, stable errors, KV, and JSON
-contracts. It does not depend on the CLI, Node, daemon, MCP, or plugin loader.
+`lilia-core` owns stable contracts and errors. `lilia-storage-sqlite` owns the standard SQLite
+adapter, lifecycle, migrations, transactions, read pool, and writer admission. Neither depends on
+the CLI, Node, daemon, MCP, or plugin loader.
 
 The standard storage adapter is bundled SQLite in WAL mode with `synchronous=FULL`. A process may
 run concurrent reads while writes are serialized by SQLite and the in-process writer mutex. LiliaDB
@@ -26,8 +27,9 @@ other expected versions implement optimistic concurrency. A missing expectation 
 - CLI uses the embedded core and emits human, JSON, or JSONL output.
 - MCP uses stdio and opens only aliases declared by the operator at startup.
 
-The daemon handshake has protocol major/minor `1.0`, a 16 MiB frame limit, per-request UUIDs, and a
-random local token stored with user-only permissions. No TCP listener exists in version `0.1`.
+The daemon handshake has protocol major/minor `1.0`, a 16 MiB frame limit, per-request UUIDs, a
+random local token stored with user-only permissions, bounded connections, and idle/deadline
+timeouts. No TCP listener exists in version `0.1`.
 
 ## Roadmap boundaries
 

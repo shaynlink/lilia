@@ -15,7 +15,13 @@ export class Database {
     if (!plugins.includes("kv") || !plugins.includes("json")) throw new Error("the v0.1 distribution requires kv and json plugins");
     const client = options.mode === "daemon"
       ? await DaemonClient.open(options.endpoint ?? `${options.path}.sock`, options.tokenFile ?? `${options.path}.token`)
-      : await EmbeddedClient.open(options.path);
+      : await EmbeddedClient.open({
+        path: options.path,
+        durability: options.durability,
+        busyTimeoutMs: options.busyTimeoutMs,
+        writerQueueCapacity: options.writerQueueCapacity,
+        readPoolSize: options.readPoolSize,
+      });
     return new Database(client);
   }
 
@@ -41,6 +47,7 @@ export class Database {
 
   batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> { return this.active().batch(operations); }
   integrityCheck(): Promise<boolean> { return this.active().integrityCheck(); }
+  backup(destination: string): Promise<void> { return this.active().backup(destination); }
   async close(): Promise<void> { if (!this.closed) await this.client.close(); this.closed = true; }
   private active(): Client { if (this.closed) throw new Error("database is closed"); return this.client; }
 }

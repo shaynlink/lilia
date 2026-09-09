@@ -1,0 +1,1 @@
+{"name":"@liliadb/node-linux-arm64-gnu","sourceRoot":"packages/node-linux-arm64-gnu","targets":{"package":{"executor":"nx:run-commands","options":{"command":"pnpm pack"}}}}

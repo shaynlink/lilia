@@ -1,0 +1,10 @@
+{
+  "name": "@liliadb/node-win32-x64-msvc",
+  "version": "0.1.0-alpha.1",
+  "description": "LiliaDB Node-API native binary for Windows x64 MSVC",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "main": "./lilia_node_native.node",
+  "files": ["lilia_node_native.node"],
+  "license": "Apache-2.0"
+}

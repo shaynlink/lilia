@@ -1,0 +1,1 @@
+{"name":"@liliadb/node-win32-x64-msvc","sourceRoot":"packages/node-win32-x64-msvc","targets":{"package":{"executor":"nx:run-commands","options":{"command":"pnpm pack"}}}}

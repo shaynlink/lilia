@@ -25,6 +25,9 @@ pub enum Operation {
     },
     Shutdown,
     IntegrityCheck,
+    Backup {
+        destination: String,
+    },
     KvGet {
         namespace: String,
         #[serde(with = "serde_bytes")]
@@ -65,6 +68,7 @@ pub enum ResponseValue {
     },
     Shutdown,
     Integrity(bool),
+    Ack,
     Kv(Option<KvEntry>),
     KvPage(Vec<KvEntry>),
     Json(Option<JsonEntry>),

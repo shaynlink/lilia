@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::Connection;
@@ -14,6 +15,15 @@ pub struct DatabaseOptions {
     pub path: PathBuf,
     pub durability: Durability,
     pub busy_timeout_ms: u64,
+    pub writer_queue_capacity: usize,
+    pub read_pool_size: usize,
+    pub checkpoint_policy: CheckpointPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckpointPolicy {
+    pub wal_bytes: u64,
+    pub interval_ms: u64,
 }
 
 impl DatabaseOptions {
@@ -22,6 +32,12 @@ impl DatabaseOptions {
             path: path.into(),
             durability: Durability::Durable,
             busy_timeout_ms: 5_000,
+            writer_queue_capacity: 64,
+            read_pool_size: 4,
+            checkpoint_policy: CheckpointPolicy {
+                wal_bytes: 16 * 1024 * 1024,
+                interval_ms: 5_000,
+            },
         }
     }
 }
@@ -30,6 +46,9 @@ impl DatabaseOptions {
 pub struct Database {
     path: PathBuf,
     writer: Mutex<Connection>,
+    readers: Vec<Mutex<Connection>>,
+    next_reader: AtomicUsize,
+    writer_queue_capacity: usize,
 }
 
 impl Database {
@@ -46,9 +65,21 @@ impl Database {
         };
         connection.pragma_update(None, "synchronous", synchronous)?;
         migrate(&connection)?;
+        let reader_count = options.read_pool_size.max(1);
+        let mut readers = Vec::with_capacity(reader_count);
+        for _ in 0..reader_count {
+            let reader = Connection::open(&options.path)?;
+            reader.busy_timeout(std::time::Duration::from_millis(options.busy_timeout_ms))?;
+            reader.pragma_update(None, "journal_mode", "WAL")?;
+            reader.pragma_update(None, "query_only", true)?;
+            readers.push(Mutex::new(reader));
+        }
         Ok(Self {
             path: options.path,
             writer: Mutex::new(connection),
+            readers,
+            next_reader: AtomicUsize::new(0),
+            writer_queue_capacity: options.writer_queue_capacity,
         })
     }
 
@@ -58,13 +89,13 @@ impl Database {
 
     pub fn integrity_check(&self) -> Result<bool> {
         let result: String = self
-            .lock()?
+            .read_lock()?
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         Ok(result == "ok")
     }
 
     pub fn checkpoint(&self) -> Result<()> {
-        self.lock()?
+        self.lock_writer()?
             .execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         Ok(())
     }
@@ -79,11 +110,34 @@ impl Database {
             ));
         }
         prepare_parent(destination)?;
-        let mut output = Connection::open(destination)?;
-        secure_database_file(destination)?;
-        let source = self.lock()?;
+        let temporary = destination.with_extension(format!(
+            "backup-{}-{}.tmp",
+            std::process::id(),
+            crate::storage::now_ms()
+        ));
+        let mut output = Connection::open(&temporary)?;
+        secure_database_file(&temporary)?;
+        let source = self.lock_writer()?;
         let backup = rusqlite::backup::Backup::new(&source, &mut output)?;
         backup.run_to_completion(128, std::time::Duration::from_millis(10), None)?;
+        drop(backup);
+        let integrity: String = output.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        drop(source);
+        drop(output);
+        if integrity != "ok" {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(LiliaError::new(
+                ErrorCode::Corrupt,
+                "backup integrity check failed",
+                false,
+            ));
+        }
+        if destination.exists() {
+            let _ = std::fs::remove_file(destination);
+        }
+        std::fs::rename(&temporary, destination)
+            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+        secure_database_file(destination)?;
         Ok(())
     }
 
@@ -102,7 +156,7 @@ impl Database {
                 false,
             ));
         }
-        let mut connection = self.lock()?;
+        let mut connection = self.try_lock_writer()?;
         let transaction = connection.transaction()?;
         let results = operations
             .iter()
@@ -112,9 +166,29 @@ impl Database {
         Ok(results)
     }
 
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
+    pub(crate) fn lock_writer(&self) -> Result<MutexGuard<'_, Connection>> {
         self.writer
             .lock()
             .map_err(|_| LiliaError::new(ErrorCode::Storage, "database lock poisoned", false))
+    }
+
+    pub(crate) fn read_lock(&self) -> Result<MutexGuard<'_, Connection>> {
+        let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        self.readers[index]
+            .lock()
+            .map_err(|_| LiliaError::new(ErrorCode::Storage, "read database lock poisoned", false))
+    }
+
+    pub(crate) fn try_lock_writer(&self) -> Result<MutexGuard<'_, Connection>> {
+        self.writer.try_lock().map_err(|_| {
+            LiliaError::new(
+                ErrorCode::Busy,
+                format!(
+                    "writer queue is saturated (capacity {})",
+                    self.writer_queue_capacity
+                ),
+                true,
+            )
+        })
     }
 }

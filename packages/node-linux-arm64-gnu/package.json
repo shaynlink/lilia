@@ -1,0 +1,10 @@
+{
+  "name": "@liliadb/node-linux-arm64-gnu",
+  "version": "0.1.0-alpha.1",
+  "description": "LiliaDB Node-API native binary for Linux arm64 GNU",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "main": "./lilia_node_native.node",
+  "files": ["lilia_node_native.node"],
+  "license": "Apache-2.0"
+}

@@ -6,7 +6,7 @@ daemon, Node.js, CLI, and MCP entry points.
 
 ## Status
 
-This repository contains the `0.1.0` foundation. SQL, Document, Graph, and encryption are planned
+This repository contains the `0.1.0-alpha.1` foundation. SQL, Document, Graph, and encryption are planned
 as separately installed native plugins; they are not claimed as implemented yet.
 
 ## Quick start
@@ -19,6 +19,7 @@ pnpm test
 pnpm lilia -- --database ./demo.lilia init --output json
 pnpm lilia -- --database ./demo.lilia json put users ada '{"name":"Ada"}' --output json
 pnpm lilia -- --database ./demo.lilia json get users ada --output json
+pnpm lilia -- --database ./demo.lilia backup ./snapshots/demo.lilia --output json
 ```
 
 Run the local daemon:
@@ -45,6 +46,10 @@ cargo run -p lilia-mcp -- --database demo=./demo.lilia
 
 See [Architecture](docs/architecture.md), [plugin format](docs/plugins.md), and
 [security policy](SECURITY.md).
+
+The native SDK selects one optional Node-API package for the current platform. Configure
+`busyTimeoutMs`, `writerQueueCapacity`, `readPoolSize`, and `checkpointPolicy` when tuning a local
+deployment; release performance budgets are calibrated from the alpha baseline.
 
 ## License
 

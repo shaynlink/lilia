@@ -1,0 +1,118 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*-alpha.*"]
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  attestations: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require annotated signed tag
+        shell: bash
+        env:
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ secrets.RELEASE_SIGNING_PUBLIC_KEY }}
+        run: |
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test -n "$RELEASE_SIGNING_PUBLIC_KEY"
+          printf '%s' "$RELEASE_SIGNING_PUBLIC_KEY" | gpg --import
+          git verify-tag "$GITHUB_REF_NAME"
+      - uses: dtolnay/rust-toolchain@1.91.1
+        with:
+          components: clippy,rustfmt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: pnpm nx run-many -t build,lint,test --all
+
+  native:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package: node-darwin-arm64
+            artifact: darwin-arm64
+          - runner: macos-15-intel
+            package: node-darwin-x64
+            artifact: darwin-x64
+          - runner: ubuntu-24.04-arm
+            package: node-linux-arm64-gnu
+            artifact: linux-arm64-gnu
+          - runner: ubuntu-24.04
+            package: node-linux-x64-gnu
+            artifact: linux-x64-gnu
+          - runner: windows-2025
+            package: node-win32-x64-msvc
+            artifact: win32-x64-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo build -p lilia-node-native -p lilia-cli -p lilia-daemon -p lilia-mcp --release
+      - name: Stage native package
+        shell: bash
+        run: |
+          mkdir -p "packages/${{ matrix.package }}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then cp target/release/lilia_node_native.dll "packages/${{ matrix.package }}/lilia_node_native.node"; fi
+          if [[ "$RUNNER_OS" == "macOS" ]]; then cp target/release/liblilia_node_native.dylib "packages/${{ matrix.package }}/lilia_node_native.node"; fi
+          if [[ "$RUNNER_OS" == "Linux" ]]; then cp target/release/liblilia_node_native.so "packages/${{ matrix.package }}/lilia_node_native.node"; fi
+      - name: Pack native package
+        shell: bash
+        run: mkdir -p release && pnpm --dir "packages/${{ matrix.package }}" pack --pack-destination "$GITHUB_WORKSPACE/release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/*
+
+  publish:
+    needs: native
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        run: sha256sum release/* > release/SHA256SUMS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Publish SDK
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @liliadb/node publish --no-git-checks --provenance
+      - name: Release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

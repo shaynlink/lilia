@@ -1,6 +1,6 @@
 {
   "name": "@liliadb/node",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Local-first multimodel database for Node.js",
   "license": "Apache-2.0",
   "type": "module",
@@ -17,5 +17,12 @@
     "package": "pnpm pack --pack-destination ../../dist"
   },
   "dependencies": { "@msgpack/msgpack": "3.1.2" },
+  "optionalDependencies": {
+    "@liliadb/node-darwin-arm64": "0.1.0-alpha.1",
+    "@liliadb/node-darwin-x64": "0.1.0-alpha.1",
+    "@liliadb/node-linux-arm64-gnu": "0.1.0-alpha.1",
+    "@liliadb/node-linux-x64-gnu": "0.1.0-alpha.1",
+    "@liliadb/node-win32-x64-msvc": "0.1.0-alpha.1"
+  },
   "devDependencies": { "@types/node": "24.10.0", "typescript": "6.0.2" }
 }

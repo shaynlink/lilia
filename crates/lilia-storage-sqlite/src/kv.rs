@@ -9,7 +9,7 @@ use lilia_core::{KvEntry, Result};
 impl Database {
     pub fn kv_get(&self, namespace: &str, key: &[u8]) -> Result<Option<KvEntry>> {
         validate_name("namespace", namespace)?;
-        let connection = self.lock()?;
+        let connection = self.read_lock()?;
         connection
             .query_row(
                 "SELECT value, version, expires_at_ms FROM _lilia_kv
@@ -36,7 +36,7 @@ impl Database {
         limit: u32,
     ) -> Result<Vec<KvEntry>> {
         validate_name("namespace", namespace)?;
-        let connection = self.lock()?;
+        let connection = self.read_lock()?;
         let mut statement = connection.prepare(
             "SELECT key, value, version, expires_at_ms FROM _lilia_kv
              WHERE namespace = ?1 AND key > ?2 AND (expires_at_ms IS NULL OR expires_at_ms > ?3)

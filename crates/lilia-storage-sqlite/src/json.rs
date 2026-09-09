@@ -10,7 +10,7 @@ impl Database {
     pub fn json_get(&self, space: &str, id: &str) -> Result<Option<JsonEntry>> {
         validate_name("space", space)?;
         validate_name("id", id)?;
-        let connection = self.lock()?;
+        let connection = self.read_lock()?;
         connection
             .query_row(
                 "SELECT value, version FROM _lilia_json WHERE space = ?1 AND id = ?2",
@@ -38,7 +38,7 @@ impl Database {
         limit: u32,
     ) -> Result<Vec<JsonEntry>> {
         validate_name("space", space)?;
-        let connection = self.lock()?;
+        let connection = self.read_lock()?;
         let mut statement = connection.prepare(
             "SELECT id, value, version FROM _lilia_json WHERE space = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
         )?;
