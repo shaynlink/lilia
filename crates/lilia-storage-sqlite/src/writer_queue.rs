@@ -23,6 +23,19 @@ struct State {
 pub(crate) struct Permit<'a>(&'a WriterQueue);
 
 impl WriterQueue {
+    #[cfg(test)]
+    pub(crate) fn wait_for_waiters(&self, count: usize) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut state = self.state.lock().unwrap();
+        while state.waiting.len() != count {
+            assert!(Instant::now() < deadline, "writer did not enter queue");
+            state = self
+                .changed
+                .wait_timeout(state, deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .0;
+        }
+    }
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             capacity,

@@ -170,7 +170,7 @@ async fn serve(
             () = shutdown.notified() => break,
         }
     }
-    Ok(())
+    close_database(database).await
 }
 
 #[cfg(windows)]
@@ -203,6 +203,12 @@ async fn serve(
             () = shutdown.notified() => break,
         }
     }
+    close_database(database).await
+}
+
+async fn close_database(database: Arc<Database>) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || database.close(std::time::Duration::from_secs(5)))
+        .await??;
     Ok(())
 }
 

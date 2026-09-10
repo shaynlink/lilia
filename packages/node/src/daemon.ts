@@ -33,7 +33,7 @@ export class DaemonClient {
   }
   async integrityCheck(): Promise<boolean> { return Boolean(await this.call({ type: "integrity_check" })); }
   async backup(destination: string): Promise<void> { await this.call({ type: "backup", destination }); }
-  close(): Promise<void> { return Promise.resolve(); }
+  close(_timeoutMs?: number): Promise<void> { return Promise.resolve(); }
 
   private async call(operation: Record<string, unknown>): Promise<unknown> {
     const socket = connect(this.endpoint);
