@@ -369,6 +369,10 @@ impl Resources {
 #[path = "engine_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
+
 // Match Result::map_err's owned error callback without repeating conversion closures.
 #[allow(clippy::needless_pass_by_value)]
 fn backup_io(error: std::io::Error) -> LiliaError {

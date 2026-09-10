@@ -174,6 +174,28 @@ request, not completed cleanup. Runtime blocking work may delay process exit;
 abrupt signals and process kills are not a graceful-drain guarantee. Implicit Rust
 drop still performs synchronous resource cleanup without a caller timeout.
 
+## Recovery test coverage
+
+Storage tests launch a child test process, pin a read snapshot, commit eight KV/JSON
+batches, and wait for an explicit acknowledgement before forcibly terminating the
+child. Two crash points are covered: after confirmed commits and after flushing
+uncommitted KV/JSON changes to WAL. Reopening must retain every confirmed value
+and version, discard the partial transaction, pass `integrity_check`, and accept
+new writes. The subprocess helper is marked ignored for direct test discovery but
+is explicitly launched twice by the parent test in normal `cargo test` runs.
+
+Additional tests restrict the writer's SQLite `max_page_count` to produce
+`SQLITE_FULL`, verify `DISK_FULL` and whole-batch rollback, lift the quota and verify
+subsequent writes and reopening. An independent SQLite connection holds a writer
+lock to verify retryable `BUSY`. A deliberately damaged, closed database header
+must return non-retryable `CORRUPT` without reinitializing or rewriting the file.
+
+These are process-crash and logical-page-quota tests, not power-loss simulations
+or real filesystem ENOSPC/I/O fault injection. They do not exhaust crash timings,
+WAL corruption cases, or failures across all public transports. Those remain
+separate resilience work; a corrupt database is diagnosed, not automatically
+repaired.
+
 ## Roadmap boundaries
 
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
