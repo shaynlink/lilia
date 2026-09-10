@@ -44,14 +44,17 @@ pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
             false,
         ));
     };
-    fs::create_dir_all(parent)
-        .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
     }
+    // Existing directories belong to the caller: never change their permissions.
+    builder
+        .create(parent)
+        .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     Ok(())
 }
 
