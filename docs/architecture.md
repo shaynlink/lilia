@@ -116,6 +116,19 @@ are user-only on Unix. Destination parent directories must be trusted and must
 not be concurrently replaced by an untrusted process; this is not a sandboxed
 path API. Windows directory durability and ACL hardening remain separate work.
 
+## Writer admission
+
+Writer admission is a bounded FIFO shared by batch mutations, explicit checkpoints
+and backups. `writerQueueCapacity` counts waiting operations in addition to the
+one active writer; zero allows only immediate admission. Saturation returns
+retryable `BUSY`. Read connections do not enter this queue.
+Daemon batch deadlines include FIFO waiting time: an expired waiter is removed
+without starting its transaction. Once a transaction starts, its actual outcome
+is returned rather than reporting a timeout that could conceal a commit.
+The queue is per database handle (not a cross-process scheduler); SQLite still
+arbitrates writers from other handles/processes via the configured busy timeout.
+Periodic checkpoints and bounded close/drain remain a subsequent lifecycle lot.
+
 ## Roadmap boundaries
 
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.

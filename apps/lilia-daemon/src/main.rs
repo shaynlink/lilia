@@ -288,9 +288,16 @@ async fn execute(
 ) -> lilia_core::Result<ResponseValue> {
     check_deadline(started, deadline_ms)?;
     tokio::task::spawn_blocking(move || {
-        // Include time waiting for a blocking worker. Once dispatch starts, return
+        // Include worker and FIFO waiting time. Once the transaction starts, return
         // its actual outcome: timing out a running write could hide a committed mutation.
         check_deadline(started, deadline_ms)?;
+        if let Operation::Batch { operations } = operation {
+            let deadline = deadline_ms
+                .and_then(|ms| started.checked_add(std::time::Duration::from_millis(ms)));
+            return database
+                .batch_with_deadline(&operations, deadline)
+                .map(ResponseValue::Mutations);
+        }
         dispatch(&database, operation)
     })
     .await
