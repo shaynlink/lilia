@@ -1,6 +1,9 @@
 packages:
   - "packages/*"
 
+overrides:
+  smol-toml: 1.7.1
+
 allowBuilds:
   nx: true
 
