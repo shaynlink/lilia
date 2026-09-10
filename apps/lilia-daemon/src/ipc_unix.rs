@@ -9,6 +9,21 @@ use tokio::net::UnixListener;
 #[cfg(test)]
 mod tests;
 
+#[cfg(target_os = "macos")]
+mod macos_acl;
+
+#[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_wraps))]
+fn check_acl(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    return macos_acl::reject_grants(path);
+    // On Linux, the POSIX ACL mask is reflected in the checked group mode bits.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 pub(crate) fn same_user(uid: u32) -> bool {
     uid == rustix::process::geteuid().as_raw()
 }
@@ -55,6 +70,7 @@ fn private_path(path: &Path) -> io::Result<PathBuf> {
                 "IPC ancestors must be real directories owned by root or the current user",
             ));
         }
+        check_acl(&current)?;
         // Root-owned sticky temporary directories prevent other users from
         // replacing our private child, while allowing ordinary /tmp use via its real path.
         let sticky_root = metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
@@ -80,7 +96,7 @@ fn validate_token(path: &Path) -> io::Result<()> {
                 && metadata.mode() & 0o077 == 0
                 && metadata.nlink() == 1 =>
         {
-            Ok(())
+            check_acl(path)
         }
         Ok(_) => Err(denied(
             "existing token must be a private, owned regular file without links",
@@ -100,6 +116,7 @@ pub(crate) fn create_token(path: &Path) -> io::Result<String> {
     let mut staging = tempfile::Builder::new()
         .prefix(".lilia-token-")
         .tempfile_in(parent)?;
+    check_acl(staging.path())?;
     let mut bytes = [0_u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let token = hex::encode(bytes);

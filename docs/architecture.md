@@ -55,6 +55,10 @@ Use physical paths (for example, resolve macOS `/var` or `/tmp` aliases with `re
 before passing a generated temporary directory). Relative paths without traversal
 are supported. This intentionally rejects older configurations using a shared IPC
 directory; choose a new private directory rather than broadening its permissions.
+On macOS, extended ACL grants on ancestors, IPC directories, existing tokens or
+staging files are refused even when mode bits are private. Deny-only ACLs, such as
+the usual home-directory delete restriction, remain supported. This deliberately
+rejects even grants to the current user rather than reinterpreting ACL inheritance.
 
 The socket is claimed before credential rotation. Every existing endpoint is refused,
 even a stale socket: inspect and remove stale endpoints explicitly after confirming

@@ -1,6 +1,50 @@
 use super::*;
 use std::os::unix::fs::symlink;
 
+#[cfg(target_os = "macos")]
+fn acl(path: &Path, rule: &str) {
+    assert!(std::process::Command::new("/bin/chmod")
+        .args(["+a", rule])
+        .arg(path)
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rejects_macos_acl_grants_despite_private_mode_bits() {
+    let (_guard, path) = directory();
+    acl(&path, "everyone allow list,search,add_file,add_subdirectory,delete_child,read,write,file_inherit,directory_inherit");
+    assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o700);
+    let error = create_token(&path.join("token")).unwrap_err();
+    assert!(error.to_string().contains("ACL grants"));
+    assert!(!path.join("token").exists());
+    assert!(create_token(&path.join("child/token")).is_err());
+    assert!(!path.join("child").exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rejects_token_acl_grants_and_allows_deny_only_acls() {
+    let (_guard, path) = directory();
+    let token_path = path.join("token");
+    let original = create_token(&token_path).unwrap();
+    acl(&token_path, "everyone allow read,write");
+    assert_eq!(fs::metadata(&token_path).unwrap().mode() & 0o777, 0o600);
+    assert!(create_token(&token_path).is_err());
+    assert_eq!(fs::read_to_string(&token_path).unwrap(), original);
+    acl(&path, "everyone deny delete");
+    let permitted = create_token(&path.join("other-token"));
+    assert!(std::process::Command::new("/bin/chmod")
+        .arg("-N")
+        .arg(&path)
+        .status()
+        .unwrap()
+        .success());
+    assert!(permitted.is_ok());
+}
+
 fn directory() -> (tempfile::TempDir, PathBuf) {
     let guard = tempfile::tempdir().unwrap();
     let path = guard.path().canonicalize().unwrap();
