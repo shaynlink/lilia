@@ -44,6 +44,33 @@ for a worker. Once work starts, the daemon returns its actual outcome rather tha
 claiming that a potentially committed write timed out. Omitting the field imposes no
 admission deadline. The existing frame-read idle timeout remains separate.
 
+## Unix IPC filesystem policy
+
+The daemon requires an owned, user-only parent directory for each socket and token.
+Missing directories are created with mode `0700`; existing directory permissions are
+never changed by the IPC setup. Ancestors must be owned by root or the current user
+and not writable by others, except root-owned sticky temporary directories. Paths
+containing parent traversal or symlinks are rejected, including directory symlinks.
+Use physical paths (for example, resolve macOS `/var` or `/tmp` aliases with `realpath`
+before passing a generated temporary directory). Relative paths without traversal
+are supported. This intentionally rejects older configurations using a shared IPC
+directory; choose a new private directory rather than broadening its permissions.
+
+The socket is claimed before credential rotation. Every existing endpoint is refused,
+even a stale socket: inspect and remove stale endpoints explicitly after confirming
+that no daemon is using them. Cleanup only removes the socket inode created by this
+instance. Accepted connections must report the current effective UID via OS peer
+credentials; credential lookup failures are refused.
+
+Tokens are written into a mode-`0600` staging file, synced, then atomically published.
+Rotation accepts only an owned private regular file with one hard link; symlinks,
+hardlinked files, public files and other entry types are rejected without modification.
+Normal shutdown retains the token for subsequent atomic replacement on restart.
+These checks isolate different unprivileged users, not root or hostile processes
+already running as the same user. They are not a general-purpose filesystem sandbox.
+Windows DACL and token-file ACL hardening remain outstanding; these Unix guarantees
+must not be inferred for Windows.
+
 ## Roadmap boundaries
 
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
