@@ -1,5 +1,29 @@
 use super::*;
 
+fn assert_safe_ancestors(security: &UserSecurity, parent: &Path) {
+    for path in parent.ancestors() {
+        let file = security.open(path, false).unwrap();
+        if let Err(error) = security.validate_security(&file, false) {
+            // ACL metadata only: never print credential contents on failure.
+            let acl = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "(Get-Acl -LiteralPath $env:LILIA_TEST_ACL_PATH).Sddl",
+                ])
+                .env("LILIA_TEST_ACL_PATH", path)
+                .output()
+                .unwrap();
+            panic!(
+                "unsafe test ancestor {}: {error}; ACL: {}",
+                path.display(),
+                String::from_utf8_lossy(&acl.stdout)
+            );
+        }
+    }
+}
+
 fn private_parent(security: &UserSecurity, path: &Path) {
     let encoded = wide(path.as_os_str()).unwrap();
     let attributes = security.attributes();
@@ -14,6 +38,7 @@ fn private_parent(security: &UserSecurity, path: &Path) {
 fn tokens_are_private_and_rotate_without_truncating_old_files() {
     let temporary = tempfile::tempdir().unwrap();
     let security = UserSecurity::new().unwrap();
+    assert_safe_ancestors(&security, temporary.path());
     let parent = temporary.path().join("private");
     private_parent(&security, &parent);
     let path = parent.join("token");
