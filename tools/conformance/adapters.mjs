@@ -19,7 +19,7 @@ export function sdk(database) {
       case 'batch': return (await database.batch(step.operations.map(sdkOperation)))
         .map(item => {
           if (item.version !== undefined) assert.equal(typeof item.version, 'bigint');
-          return { deleted: item.deleted, version: item.version == null ? null : Number(item.version) };
+          return { deleted: item.deleted, version: item.version == null ? null : item.version.toString() };
         });
       case 'kv_get': return kv(await database.kv.get(step.namespace, Uint8Array.from(step.key)));
       case 'kv_scan': return (await database.kv.scan(step.namespace, {
@@ -39,11 +39,11 @@ function kv(entry) {
     assert.equal(typeof entry.version, 'bigint');
   }
   return entry == null ? null : { namespace: entry.namespace, key: [...entry.key], value: [...entry.value],
-    version: Number(entry.version), expires_at_ms: entry.expiresAtMs ?? null };
+    version: entry.version.toString(), expires_at_ms: entry.expiresAtMs ?? null };
 }
 function json(entry) {
   if (entry != null) assert.equal(typeof entry.version, 'bigint');
-  return entry == null ? null : { ...entry, version: Number(entry.version) };
+  return entry == null ? null : { ...entry, version: entry.version.toString() };
 }
 
 export function cli(binary, path, directory) {

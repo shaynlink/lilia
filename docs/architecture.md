@@ -19,6 +19,31 @@ All internal tables use the `_lilia_` prefix. Format version `1` provides:
 `batch` is the common atomic mutation primitive. An expected version of `0` means create-only;
 other expected versions implement optimistic concurrency. A missing expectation is unconditional.
 
+## Exact versions
+
+Rust versions and conditional expectations are `u64`. Node requires `bigint` for
+`ifVersion` in `0..=18446744073709551615` and always returns version `bigint`s;
+numbers, negative values and values above u64 are rejected, not coerced or wrapped.
+MessagePack retains native integer fields, so protocol 1.0 framing is unchanged.
+The SDK uses 64-bit integer encoding/decoding and never routes versions through
+JavaScript `number`.
+
+Human-readable serialization (native JSON, CLI JSON/JSONL, and MCP) now emits
+canonical decimal strings for `version` and `if_version`, including small values.
+Absent versions remain null. Integer JSON inputs remain accepted for compatibility,
+but clients should send decimal strings to avoid rounding before transmission.
+Conflict details `expected` and `actual` are decimal strings or null as well.
+This is a pre-alpha JSON output contract change: update consumers and install the
+SDK and native addon together. It does not change numbers inside JSON documents;
+Node `JsonValue` still uses IEEE-754 `number`. SDK expiration inputs must be safe
+integer milliseconds, encoded as integers over IPC.
+
+Storage format 1 still uses positive SQLite INTEGER versions, capped at
+9223372036854775807 (`i64::MAX`). The full u64 expectation range can be compared
+exactly, but incrementing a stored version beyond that cap returns non-retryable
+`STORAGE` and rolls back the batch. Supporting stored versions beyond this limit
+requires a separate format migration; this transport fix does not perform one.
+
 ## Runtime modes
 
 - Embedded Rust calls `lilia-core` directly.

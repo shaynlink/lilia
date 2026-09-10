@@ -5,9 +5,12 @@ import { join, resolve } from 'node:path';
 import { command, bounded } from './process.mjs';
 import { cli, daemon, mcp, sdk } from './adapters.mjs';
 import { Database } from '../../packages/node/dist/index.js';
+import { precision } from './versions.mjs';
 
 const rust = command('cargo', ['test', '-p', 'lilia-storage-sqlite', '--test', 'conformance'], { stdio: 'inherit', timeout: 0 });
 assert.equal(rust.status, 0, 'Rust embedded conformance');
+const codec = command(process.execPath, ['--test', 'packages/node/dist/version.test.js'], { stdio: 'inherit' });
+assert.equal(codec.status, 0, 'SDK version codec validation');
 const fixtures = JSON.parse(await readFile(new URL('./fixtures.json', import.meta.url), 'utf8'));
 assert(fixtures.length > 0);
 process.env.LILIA_NATIVE_PATH = resolve('target/debug/lilia_node_native.node');
@@ -54,4 +57,5 @@ try {
   }
   finally { await server.close(); }
   console.log(`Conformance passed: 5 surfaces × ${fixtures.length} shared steps`);
+  await precision(directory, executable);
 } finally { await rm(directory, { recursive: true, force: true }); }

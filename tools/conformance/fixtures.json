@@ -4,19 +4,19 @@
   {"name":"atomic multimodel create", "op":"batch", "operations":[
     {"model":"kv_set","namespace":"cache","key":[97],"value":[0,128,255],"if_version":0},
     {"model":"json_put","space":"docs","id":"a","value":{"nested":[null,true,3.5,"é"]},"if_version":0}
-  ], "expected":[{"version":1,"deleted":false},{"version":1,"deleted":false}]},
-  {"name":"binary KV value", "op":"kv_get", "namespace":"cache", "key":[97], "expected":{"namespace":"cache","key":[97],"value":[0,128,255],"version":1,"expires_at_ms":null}},
-  {"name":"recursive JSON value", "op":"json_get", "space":"docs", "id":"a", "expected":{"space":"docs","id":"a","value":{"nested":[null,true,3.5,"é"]},"version":1}},
+  ], "expected":[{"version":"1","deleted":false},{"version":"1","deleted":false}]},
+  {"name":"binary KV value", "op":"kv_get", "namespace":"cache", "key":[97], "expected":{"namespace":"cache","key":[97],"value":[0,128,255],"version":"1","expires_at_ms":null}},
+  {"name":"recursive JSON value", "op":"json_get", "space":"docs", "id":"a", "expected":{"space":"docs","id":"a","value":{"nested":[null,true,3.5,"é"]},"version":"1"}},
   {"name":"optimistic update", "op":"batch", "operations":[
     {"model":"kv_set","namespace":"cache","key":[97],"value":[42],"if_version":1},
     {"model":"json_put","space":"docs","id":"a","value":null,"if_version":1}
-  ], "expected":[{"version":2,"deleted":false},{"version":2,"deleted":false}]},
+  ], "expected":[{"version":"2","deleted":false},{"version":"2","deleted":false}]},
   {"name":"rollback on stale JSON version", "op":"batch", "operations":[
     {"model":"kv_set","namespace":"cache","key":[97],"value":[99]},
     {"model":"json_put","space":"docs","id":"a","value":false,"if_version":1}
   ], "error":{"code":"CONFLICT","retryable":true}},
-  {"name":"KV update rolled back", "op":"kv_get", "namespace":"cache", "key":[97], "expected":{"namespace":"cache","key":[97],"value":[42],"version":2,"expires_at_ms":null}},
-  {"name":"JSON unchanged on conflict", "op":"json_get", "space":"docs", "id":"a", "expected":{"space":"docs","id":"a","value":null,"version":2}},
+  {"name":"KV update rolled back", "op":"kv_get", "namespace":"cache", "key":[97], "expected":{"namespace":"cache","key":[97],"value":[42],"version":"2","expires_at_ms":null}},
+  {"name":"JSON unchanged on conflict", "op":"json_get", "space":"docs", "id":"a", "expected":{"space":"docs","id":"a","value":null,"version":"2"}},
   {"name":"rollback on stale KV version", "op":"batch", "operations":[
     {"model":"json_put","space":"docs","id":"rollback","value":1},
     {"model":"kv_delete","namespace":"cache","key":[97],"if_version":1}
@@ -31,15 +31,15 @@
     {"model":"kv_set","namespace":"cache","key":[100],"value":[4],"expires_at_ms":0},
     {"model":"json_put","space":"docs","id":"c","value":3},
     {"model":"json_put","space":"docs","id":"b","value":2}
-  ], "expected":[{"version":1,"deleted":false},{"version":1,"deleted":false},{"version":1,"deleted":false},{"version":1,"deleted":false},{"version":1,"deleted":false}]},
+  ], "expected":[{"version":"1","deleted":false},{"version":"1","deleted":false},{"version":"1","deleted":false},{"version":"1","deleted":false},{"version":"1","deleted":false}]},
   {"name":"expired KV hidden", "op":"kv_get", "namespace":"cache", "key":[100], "expected":null},
   {"name":"KV first page", "op":"kv_scan", "namespace":"cache", "limit":2, "expected":[
-    {"namespace":"cache","key":[97],"value":[42],"version":2,"expires_at_ms":null},
-    {"namespace":"cache","key":[98],"value":[2],"version":1,"expires_at_ms":null}
+    {"namespace":"cache","key":[97],"value":[42],"version":"2","expires_at_ms":null},
+    {"namespace":"cache","key":[98],"value":[2],"version":"1","expires_at_ms":null}
   ]},
-  {"name":"KV exclusive next page hides expiry", "op":"kv_scan", "namespace":"cache", "after":[98], "limit":2, "expected":[{"namespace":"cache","key":[99],"value":[3],"version":1,"expires_at_ms":null}]},
-  {"name":"JSON first page", "op":"json_scan", "space":"docs", "limit":2, "expected":[{"space":"docs","id":"a","value":null,"version":2},{"space":"docs","id":"b","value":2,"version":1}]},
-  {"name":"JSON exclusive next page", "op":"json_scan", "space":"docs", "after":"b", "limit":2, "expected":[{"space":"docs","id":"c","value":3,"version":1}]},
+  {"name":"KV exclusive next page hides expiry", "op":"kv_scan", "namespace":"cache", "after":[98], "limit":2, "expected":[{"namespace":"cache","key":[99],"value":[3],"version":"1","expires_at_ms":null}]},
+  {"name":"JSON first page", "op":"json_scan", "space":"docs", "limit":2, "expected":[{"space":"docs","id":"a","value":null,"version":"2"},{"space":"docs","id":"b","value":2,"version":"1"}]},
+  {"name":"JSON exclusive next page", "op":"json_scan", "space":"docs", "after":"b", "limit":2, "expected":[{"space":"docs","id":"c","value":3,"version":"1"}]},
   {"name":"KV namespace isolation", "op":"kv_scan", "namespace":"other", "limit":10, "expected":[]},
   {"name":"JSON space isolation", "op":"json_scan", "space":"other", "limit":10, "expected":[]},
   {"name":"conditional multimodel delete", "op":"batch", "operations":[

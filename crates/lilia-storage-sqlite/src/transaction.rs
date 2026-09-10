@@ -113,7 +113,7 @@ fn assert_version(current: Option<u64>, expected: Option<u64>) -> Result<()> {
     if expected.is_some_and(|expected| current.unwrap_or(0) != expected) {
         return Err(
             LiliaError::new(ErrorCode::Conflict, "optimistic version conflict", true)
-                .details(json!({ "expected": expected, "actual": current })),
+                .details(json!({ "expected": expected.map(|value| value.to_string()), "actual": current.map(|value| value.to_string()) })),
         );
     }
     Ok(())

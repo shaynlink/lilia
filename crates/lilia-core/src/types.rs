@@ -17,6 +17,7 @@ pub struct KvEntry {
     pub key: Vec<u8>,
     #[serde(with = "serde_bytes")]
     pub value: Vec<u8>,
+    #[serde(with = "crate::version")]
     pub version: u64,
     pub expires_at_ms: Option<i64>,
 }
@@ -26,6 +27,7 @@ pub struct JsonEntry {
     pub space: String,
     pub id: String,
     pub value: Value,
+    #[serde(with = "crate::version")]
     pub version: u64,
 }
 
@@ -38,6 +40,7 @@ pub enum BatchOperation {
         key: Vec<u8>,
         #[serde(with = "serde_bytes")]
         value: Vec<u8>,
+        #[serde(default, with = "crate::version::optional")]
         if_version: Option<u64>,
         expires_at_ms: Option<i64>,
     },
@@ -45,23 +48,27 @@ pub enum BatchOperation {
         namespace: String,
         #[serde(with = "serde_bytes")]
         key: Vec<u8>,
+        #[serde(default, with = "crate::version::optional")]
         if_version: Option<u64>,
     },
     JsonPut {
         space: String,
         id: String,
         value: Value,
+        #[serde(default, with = "crate::version::optional")]
         if_version: Option<u64>,
     },
     JsonDelete {
         space: String,
         id: String,
+        #[serde(default, with = "crate::version::optional")]
         if_version: Option<u64>,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationResult {
+    #[serde(default, with = "crate::version::optional")]
     pub version: Option<u64>,
     pub deleted: bool,
 }
