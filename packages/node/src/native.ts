@@ -22,45 +22,47 @@ export class EmbeddedClient {
 
   static async open(options: Record<string, unknown>): Promise<EmbeddedClient> {
     const module = loadNative();
-    return new EmbeddedClient(await module.NativeDatabase.open(options));
+    return new EmbeddedClient(await nativeCall(module.NativeDatabase.open(options)));
   }
 
   async kvGet(namespace: string, key: Uint8Array): Promise<KvEntry | undefined> {
-    const entry = await this.native.kvGet(namespace, Buffer.from(key));
+    const entry = await nativeCall(this.native.kvGet(namespace, Buffer.from(key)));
     return entry ? mapKv(entry) : undefined;
   }
 
   async kvScan(namespace: string, after: Uint8Array | undefined, limit: number): Promise<KvEntry[]> {
-    return (await this.native.kvScan(namespace, after ? Buffer.from(after) : undefined, limit)).map(mapKv);
+    return (await nativeCall(this.native.kvScan(namespace, after ? Buffer.from(after) : undefined, limit))).map(mapKv);
   }
 
   async jsonGet(space: string, id: string): Promise<JsonEntry | undefined> {
-    const entry = await this.native.jsonGet(space, id);
+    const entry = await nativeCall(this.native.jsonGet(space, id));
     return entry ? parseJsonEntry(entry) : undefined;
   }
 
   async jsonScan(space: string, after: string | undefined, limit: number): Promise<JsonEntry[]> {
-    return (JSON.parse(await this.native.jsonScan(space, after, limit)) as Array<Record<string, unknown>>).map(mapJson);
+    return (JSON.parse(await nativeCall(this.native.jsonScan(space, after, limit))) as Array<Record<string, unknown>>).map(mapJson);
   }
 
   async batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> {
     const wire = operations.map(toNativeWire);
-    const result = JSON.parse(await this.native.batch(JSON.stringify(wire))) as Array<{ version?: number; deleted: boolean }>;
-    return result.map(item => ({ ...item, version: item.version === undefined ? undefined : BigInt(item.version) }));
+    const result = JSON.parse(await nativeCall(this.native.batch(JSON.stringify(wire)))) as Array<{ version?: number | null; deleted: boolean }>;
+    return result.map(item => ({ ...item, version: item.version == null ? undefined : BigInt(item.version) }));
   }
 
-  integrityCheck(): Promise<boolean> { return this.native.integrityCheck(); }
-  backup(destination: string): Promise<void> { return this.native.backup(destination); }
-  async close(timeoutMs?: number): Promise<void> {
-    try { await this.native.close(timeoutMs); }
-    catch (error) {
-      if (error instanceof Error) {
-        let shape;
-        try { shape = JSON.parse(error.message); } catch { throw error; }
-        if (typeof shape?.code === "string" && typeof shape?.message === "string") throw new LiliaError(shape);
-      }
-      throw error;
+  integrityCheck(): Promise<boolean> { return nativeCall(this.native.integrityCheck()); }
+  backup(destination: string): Promise<void> { return nativeCall(this.native.backup(destination)); }
+  close(timeoutMs?: number): Promise<void> { return nativeCall(this.native.close(timeoutMs)); }
+}
+
+async function nativeCall<T>(operation: Promise<T>): Promise<T> {
+  try { return await operation; }
+  catch (error) {
+    if (error instanceof Error) {
+      let shape;
+      try { shape = JSON.parse(error.message); } catch { throw error; }
+      if (typeof shape?.code === "string" && typeof shape?.message === "string") throw new LiliaError(shape);
     }
+    throw error;
   }
 }
 
