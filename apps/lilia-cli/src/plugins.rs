@@ -165,7 +165,9 @@ fn decode_keys(encoded: &[String]) -> anyhow::Result<Vec<VerifyingKey>> {
 mod tests {
     use std::fs;
 
-    use super::{installed_names, require_real_directory, unsigned_policy};
+    #[cfg(unix)]
+    use super::require_real_directory;
+    use super::{installed_names, unsigned_policy};
 
     #[test]
     fn unsigned_policy_requires_explicit_development_mode() {
