@@ -44,6 +44,24 @@ for a worker. Once work starts, the daemon returns its actual outcome rather tha
 claiming that a potentially committed write timed out. Omitting the field imposes no
 admission deadline. The existing frame-read idle timeout remains separate.
 
+## Backups
+
+`backup(destination)` creates a new snapshot using SQLite's online backup API,
+checks its integrity, closes and syncs it, then publishes it atomically without
+overwriting any existing entry. Use a fresh destination name for every backup;
+existing files, directories, hard links and symlinks are rejected. Staging is in a
+private sibling directory and is cleaned on normal success or failure. A process
+kill can leave an unpublished `.lilia-backup-*` directory for manual cleanup.
+Publication requires a local filesystem supporting hard links; unsupported
+filesystems return an error without deleting the destination. Unix publication
+also syncs the destination directory. A directory-sync failure can be reported
+after the complete snapshot has become visible.
+
+Existing parent-directory permissions are preserved; newly created directories
+are user-only on Unix. Destination parent directories must be trusted and must
+not be concurrently replaced by an untrusted process; this is not a sandboxed
+path API. Windows directory durability and ACL hardening remain separate work.
+
 ## Roadmap boundaries
 
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
