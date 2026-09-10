@@ -109,12 +109,30 @@ impl Database {
                 false,
             ));
         }
+        // Refuse every existing entry, including dangling symlinks and source aliases.
+        // Publication below also enforces this atomically against concurrent creators.
+        match std::fs::symlink_metadata(destination) {
+            Ok(_) => {
+                return Err(LiliaError::new(
+                    ErrorCode::InvalidInput,
+                    "backup destination already exists",
+                    false,
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(backup_io(error)),
+        }
         prepare_parent(destination)?;
-        let temporary = destination.with_extension(format!(
-            "backup-{}-{}.tmp",
-            std::process::id(),
-            crate::storage::now_ms()
-        ));
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        // A private sibling directory also protects SQLite's temporary sidecars.
+        let staging = tempfile::Builder::new()
+            .prefix(".lilia-backup-")
+            .tempdir_in(parent)
+            .map_err(backup_io)?;
+        let temporary = staging.path().join("snapshot.lilia");
         let mut output = Connection::open(&temporary)?;
         secure_database_file(&temporary)?;
         let source = self.lock_writer()?;
@@ -123,21 +141,28 @@ impl Database {
         drop(backup);
         let integrity: String = output.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         drop(source);
-        drop(output);
+        output
+            .close()
+            .map_err(|(_, error)| LiliaError::from(error))?;
         if integrity != "ok" {
-            let _ = std::fs::remove_file(&temporary);
             return Err(LiliaError::new(
                 ErrorCode::Corrupt,
                 "backup integrity check failed",
                 false,
             ));
         }
-        if destination.exists() {
-            let _ = std::fs::remove_file(destination);
-        }
-        std::fs::rename(&temporary, destination)
-            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
-        secure_database_file(destination)?;
+        std::fs::File::open(&temporary)
+            .map_err(backup_io)?
+            .sync_all()
+            .map_err(backup_io)?;
+        // Unlike rename on Unix, hard_link never replaces an existing destination.
+        // Both names are on the same filesystem; only a complete snapshot becomes visible.
+        std::fs::hard_link(&temporary, destination).map_err(backup_io)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)
+            .map_err(backup_io)?
+            .sync_all()
+            .map_err(backup_io)?;
         Ok(())
     }
 
@@ -191,4 +216,10 @@ impl Database {
             )
         })
     }
+}
+
+// Match Result::map_err's owned error callback without repeating conversion closures.
+#[allow(clippy::needless_pass_by_value)]
+fn backup_io(error: std::io::Error) -> LiliaError {
+    LiliaError::new(ErrorCode::Io, error.to_string(), false)
 }
