@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
+use crate::checkpoint::{CheckpointStats, Checkpointer};
 use crate::storage::{migrate, prepare_parent, secure_database_file};
 use crate::transaction::apply;
 use crate::writer_queue::{Permit, WriterQueue};
@@ -47,6 +48,8 @@ impl DatabaseOptions {
 
 #[derive(Debug)]
 pub struct Database {
+    // Stop/join maintenance before dropping the database connections.
+    checkpointer: Checkpointer,
     path: PathBuf,
     writer: Mutex<Connection>,
     readers: Vec<Mutex<Connection>>,
@@ -75,6 +78,15 @@ impl DerefMut for WriterGuard<'_> {
 
 impl Database {
     pub fn open(options: DatabaseOptions) -> Result<Self> {
+        if options.checkpoint_policy.wal_bytes == 0
+            || !(1..=u64::from(u32::MAX)).contains(&options.checkpoint_policy.interval_ms)
+        {
+            return Err(LiliaError::new(
+                ErrorCode::InvalidInput,
+                "checkpoint wal_bytes must be positive and interval_ms must be in 1..=4294967295",
+                false,
+            ));
+        }
         prepare_parent(&options.path)?;
         let connection = Connection::open(&options.path)?;
         secure_database_file(&options.path)?;
@@ -86,6 +98,8 @@ impl Database {
             Durability::Performance => "OFF",
         };
         connection.pragma_update(None, "synchronous", synchronous)?;
+        // Disable SQLite's commit-path checkpoint in favor of background work.
+        connection.pragma_update(None, "wal_autocheckpoint", 0)?;
         migrate(&connection)?;
         let reader_count = options.read_pool_size.max(1);
         let mut readers = Vec::with_capacity(reader_count);
@@ -97,6 +111,11 @@ impl Database {
             readers.push(Mutex::new(reader));
         }
         Ok(Self {
+            checkpointer: Checkpointer::start(
+                &options.path,
+                options.checkpoint_policy,
+                synchronous,
+            )?,
             path: options.path,
             writer: Mutex::new(connection),
             readers,
@@ -107,6 +126,10 @@ impl Database {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn checkpoint_stats(&self) -> CheckpointStats {
+        self.checkpointer.stats()
     }
 
     pub fn integrity_check(&self) -> Result<bool> {
@@ -229,6 +252,8 @@ impl Database {
             .map(|operation| apply(&transaction, operation))
             .collect::<Result<Vec<_>>>()?;
         transaction.commit()?;
+        drop(connection);
+        self.checkpointer.notify();
         Ok(results)
     }
 

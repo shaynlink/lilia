@@ -21,6 +21,14 @@ pub struct NativeOpenOptions {
     pub busy_timeout_ms: Option<u32>,
     pub writer_queue_capacity: Option<u32>,
     pub read_pool_size: Option<u32>,
+    pub checkpoint_policy: Option<NativeCheckpointPolicy>,
+}
+
+#[napi(object)]
+#[derive(Debug)]
+pub struct NativeCheckpointPolicy {
+    pub wal_bytes: Option<u32>,
+    pub interval_ms: Option<u32>,
 }
 
 #[napi(object)]
@@ -64,6 +72,14 @@ impl NativeDatabase {
             }
             if let Some(value) = options.read_pool_size {
                 settings.read_pool_size = value as usize;
+            }
+            if let Some(policy) = options.checkpoint_policy {
+                if let Some(value) = policy.wal_bytes {
+                    settings.checkpoint_policy.wal_bytes = u64::from(value);
+                }
+                if let Some(value) = policy.interval_ms {
+                    settings.checkpoint_policy.interval_ms = u64::from(value);
+                }
             }
             Database::open(settings).map_err(napi_error)
         })
