@@ -1,13 +1,16 @@
 #![allow(clippy::missing_errors_doc)]
 
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
+use std::time::Instant;
 
 use rusqlite::Connection;
 
 use crate::storage::{migrate, prepare_parent, secure_database_file};
 use crate::transaction::apply;
+use crate::writer_queue::{Permit, WriterQueue};
 use lilia_core::{BatchOperation, Durability, ErrorCode, LiliaError, MutationResult, Result};
 
 #[derive(Debug, Clone)]
@@ -48,7 +51,26 @@ pub struct Database {
     writer: Mutex<Connection>,
     readers: Vec<Mutex<Connection>>,
     next_reader: AtomicUsize,
-    writer_queue_capacity: usize,
+    writer_queue: WriterQueue,
+}
+
+pub(crate) struct WriterGuard<'a> {
+    // Drop the connection lock before making the next FIFO permit available.
+    connection: MutexGuard<'a, Connection>,
+    _permit: Permit<'a>,
+}
+
+impl Deref for WriterGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.connection
+    }
+}
+
+impl DerefMut for WriterGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
 }
 
 impl Database {
@@ -79,7 +101,7 @@ impl Database {
             writer: Mutex::new(connection),
             readers,
             next_reader: AtomicUsize::new(0),
-            writer_queue_capacity: options.writer_queue_capacity,
+            writer_queue: WriterQueue::new(options.writer_queue_capacity),
         })
     }
 
@@ -170,6 +192,15 @@ impl Database {
     }
 
     pub fn batch(&self, operations: &[BatchOperation]) -> Result<Vec<MutationResult>> {
+        self.batch_with_deadline(operations, None)
+    }
+
+    /// Deadline applies to writer admission, not an already executing transaction.
+    pub fn batch_with_deadline(
+        &self,
+        operations: &[BatchOperation],
+        deadline: Option<Instant>,
+    ) -> Result<Vec<MutationResult>> {
         if operations.is_empty() {
             return Err(LiliaError::new(
                 ErrorCode::InvalidInput,
@@ -184,7 +215,14 @@ impl Database {
                 false,
             ));
         }
-        let mut connection = self.try_lock_writer()?;
+        let mut connection = self.writer_lock(deadline)?;
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(LiliaError::new(
+                ErrorCode::Timeout,
+                "request expired before transaction",
+                true,
+            ));
+        }
         let transaction = connection.transaction()?;
         let results = operations
             .iter()
@@ -194,10 +232,20 @@ impl Database {
         Ok(results)
     }
 
-    pub(crate) fn lock_writer(&self) -> Result<MutexGuard<'_, Connection>> {
-        self.writer
+    pub(crate) fn lock_writer(&self) -> Result<WriterGuard<'_>> {
+        self.writer_lock(None)
+    }
+
+    fn writer_lock(&self, deadline: Option<Instant>) -> Result<WriterGuard<'_>> {
+        let permit = self.writer_queue.acquire(deadline)?;
+        let connection = self
+            .writer
             .lock()
-            .map_err(|_| LiliaError::new(ErrorCode::Storage, "database lock poisoned", false))
+            .map_err(|_| LiliaError::new(ErrorCode::Storage, "database lock poisoned", false))?;
+        Ok(WriterGuard {
+            connection,
+            _permit: permit,
+        })
     }
 
     pub(crate) fn read_lock(&self) -> Result<MutexGuard<'_, Connection>> {
@@ -206,20 +254,11 @@ impl Database {
             .lock()
             .map_err(|_| LiliaError::new(ErrorCode::Storage, "read database lock poisoned", false))
     }
-
-    pub(crate) fn try_lock_writer(&self) -> Result<MutexGuard<'_, Connection>> {
-        self.writer.try_lock().map_err(|_| {
-            LiliaError::new(
-                ErrorCode::Busy,
-                format!(
-                    "writer queue is saturated (capacity {})",
-                    self.writer_queue_capacity
-                ),
-                true,
-            )
-        })
-    }
 }
+
+#[cfg(test)]
+#[path = "engine_tests.rs"]
+mod tests;
 
 // Match Result::map_err's owned error callback without repeating conversion closures.
 #[allow(clippy::needless_pass_by_value)]
