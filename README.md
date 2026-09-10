@@ -22,14 +22,21 @@ pnpm lilia -- --database ./demo.lilia json get users ada --output json
 pnpm lilia -- --database ./demo.lilia backup ./snapshots/demo.lilia --output json
 ```
 
-Run the local daemon:
+Run the local daemon on Unix in a new private directory:
 
 ```sh
 cargo run -p lilia-daemon -- \
-  --database ./demo.lilia \
-  --endpoint ./demo.lilia.sock \
-  --token-file ./demo.lilia.token
+  --database ./lilia-local/demo.lilia \
+  --endpoint ./lilia-local/demo.lilia.sock \
+  --token-file ./lilia-local/demo.lilia.token
 ```
+
+The daemon creates missing IPC directories with mode `0700`; an existing directory
+must already be private. CLI default socket/token paths are next to the database,
+so CLI daemon commands also require a private database directory unless explicit
+IPC paths are supplied. Use physical paths without symlinks (resolve macOS temporary
+directory aliases first). Existing socket paths are never removed automatically.
+See [IPC filesystem policy](docs/architecture.md#unix-ipc-filesystem-policy).
 
 Run the MCP stdio server with explicitly allowed database aliases:
 

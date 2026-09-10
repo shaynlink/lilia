@@ -2,6 +2,21 @@ use super::*;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+#[cfg(unix)]
+#[test]
+fn token_symlink_is_rejected_without_touching_target() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let directory = directory.path().canonicalize().unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let target = directory.join("valuable-file");
+    fs::write(&target, b"preserve me").unwrap();
+    let token = directory.join("token");
+    std::os::unix::fs::symlink(&target, &token).unwrap();
+    assert!(create_token(&token).is_err());
+    assert_eq!(fs::read(&target).unwrap(), b"preserve me");
+}
+
 fn mutation() -> Operation {
     Operation::Batch {
         operations: vec![lilia_core::BatchOperation::KvSet {

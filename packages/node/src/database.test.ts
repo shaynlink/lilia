@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:net";
@@ -18,7 +18,7 @@ test("embedded KV, JSON, and rollback conformance", { skip: !nativePath }, async
 });
 
 test("daemon KV and JSON conformance", { skip: !daemonBinary }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), "lilia-daemon-"));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "lilia-daemon-")));
   const path = join(directory, "daemon.lilia");
   const endpoint = process.platform === "win32" ? `\\\\.\\pipe\\liliadb-test-${process.pid}` : `${path}.sock`;
   const tokenFile = `${path}.token`;

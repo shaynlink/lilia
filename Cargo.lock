@@ -748,6 +748,7 @@ dependencies = [
  "lilia-protocol",
  "lilia-storage-sqlite",
  "rand",
+ "rustix",
  "serde_json",
  "subtle",
  "tempfile",
