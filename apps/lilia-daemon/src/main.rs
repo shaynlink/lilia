@@ -11,10 +11,14 @@ use lilia_protocol::{
 };
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use rand::RngCore;
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Notify, Semaphore};
 use tracing::info;
 use uuid::Uuid;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "LiliaDB local daemon")]
@@ -215,22 +219,20 @@ where
         let should_shutdown = matches!(request.operation, Operation::Shutdown);
         let started = Instant::now();
         let request_uuid = Uuid::parse_str(&request.id).unwrap_or_else(|_| Uuid::new_v4());
-        let result = if request.token != token {
+        let result = if bool::from(request.token.as_bytes().ct_eq(token.as_bytes())) {
+            execute(
+                Arc::clone(&database),
+                request.operation,
+                started,
+                request.deadline_ms,
+            )
+            .await
+        } else {
             Err(LiliaError::new(
                 ErrorCode::Unauthorized,
                 "invalid daemon token",
                 false,
             ))
-        } else if request.deadline_ms.is_some_and(|deadline| {
-            deadline == 0 || started.elapsed().as_millis() >= u128::from(deadline)
-        }) {
-            Err(LiliaError::new(
-                ErrorCode::Timeout,
-                "request deadline exceeded",
-                true,
-            ))
-        } else {
-            dispatch(&database, request.operation)
         };
         let result = result.map_err(|error| error.with_request_id(request_uuid));
         let success = result.is_ok();
@@ -249,11 +251,39 @@ where
             elapsed_us = started.elapsed().as_micros(),
             "request completed"
         );
-        if should_shutdown {
+        if should_shutdown && success {
             shutdown.notify_one();
             return Ok(());
         }
     }
+}
+
+fn check_deadline(started: Instant, deadline_ms: Option<u64>) -> lilia_core::Result<()> {
+    if deadline_ms.is_some_and(|ms| started.elapsed() >= Duration::from_millis(ms)) {
+        return Err(LiliaError::new(
+            ErrorCode::Timeout,
+            "request deadline exceeded",
+            true,
+        ));
+    }
+    Ok(())
+}
+
+async fn execute(
+    database: Arc<Database>,
+    operation: Operation,
+    started: Instant,
+    deadline_ms: Option<u64>,
+) -> lilia_core::Result<ResponseValue> {
+    check_deadline(started, deadline_ms)?;
+    tokio::task::spawn_blocking(move || {
+        // Include time waiting for a blocking worker. Once dispatch starts, return
+        // its actual outcome: timing out a running write could hide a committed mutation.
+        check_deadline(started, deadline_ms)?;
+        dispatch(&database, operation)
+    })
+    .await
+    .map_err(|_| LiliaError::new(ErrorCode::Storage, "request worker failed", false))?
 }
 
 fn operation_name(operation: &Operation) -> &'static str {

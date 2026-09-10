@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import test from "node:test";
 
@@ -26,7 +27,7 @@ test("daemon KV and JSON conformance", { skip: !daemonBinary }, async () => {
     daemon = spawn(daemonBinary!, ["--database", path, "--endpoint", endpoint, "--token-file", tokenFile], {
       stdio: "ignore",
     });
-    await waitUntilReady(tokenFile, daemon);
+    await waitUntilReady(tokenFile, endpoint, daemon);
     await conformance("daemon", path, endpoint, tokenFile);
   } finally {
     daemon?.kill();
@@ -58,13 +59,19 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
   }
 }
 
-async function waitUntilReady(tokenFile: string, daemon: ChildProcess): Promise<void> {
+async function waitUntilReady(tokenFile: string, endpoint: string, daemon: ChildProcess): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (daemon.exitCode !== null) throw new Error(`daemon exited with ${daemon.exitCode}`);
     try {
       const { access } = await import("node:fs/promises");
       await access(tokenFile);
+      // The token is created before SQLite is opened and the IPC listener is bound.
+      await new Promise<void>((resolve, reject) => {
+        const socket = connect(endpoint);
+        socket.once("connect", () => { socket.destroy(); resolve(); });
+        socket.once("error", error => { socket.destroy(); reject(error); });
+      });
       return;
     } catch {
       await new Promise(resolve => setTimeout(resolve, 25));
