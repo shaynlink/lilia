@@ -11,6 +11,11 @@ export class Database {
   private constructor(private readonly client: Client) {}
 
   static async open(options: OpenOptions): Promise<Database> {
+    for (const value of [options.checkpointPolicy?.walBytes, options.checkpointPolicy?.intervalMs]) {
+      if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 0xffff_ffff)) {
+        throw new RangeError("checkpoint policy values must be integers in 1..=4294967295");
+      }
+    }
     const plugins = options.plugins ?? ["kv", "json"];
     if (!plugins.includes("kv") || !plugins.includes("json")) throw new Error("the v0.1 distribution requires kv and json plugins");
     const client = options.mode === "daemon"
@@ -21,6 +26,7 @@ export class Database {
         busyTimeoutMs: options.busyTimeoutMs,
         writerQueueCapacity: options.writerQueueCapacity,
         readPoolSize: options.readPoolSize,
+        checkpointPolicy: options.checkpointPolicy,
       });
     return new Database(client);
   }

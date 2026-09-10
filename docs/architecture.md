@@ -127,7 +127,30 @@ without starting its transaction. Once a transaction starts, its actual outcome
 is returned rather than reporting a timeout that could conceal a commit.
 The queue is per database handle (not a cross-process scheduler); SQLite still
 arbitrates writers from other handles/processes via the configured busy timeout.
-Periodic checkpoints and bounded close/drain remain a subsequent lifecycle lot.
+Bounded close/drain remains a subsequent lifecycle lot.
+
+## Automatic checkpoints
+
+The writer disables SQLite's commit-path autocheckpoint. Each database handle owns
+one maintenance thread with its own connection; commits send coalesced, nonblocking
+wakeups. The worker uses `wal_checkpoint(NOOP)` to measure outstanding frames
+(page bytes plus frame headers), not the allocated WAL file size. It runs a
+`PASSIVE` checkpoint when the byte threshold or periodic interval is reached.
+It also checks recovered WAL at startup and polls when there are no local writes.
+The maintenance connection has a zero busy timeout and never takes the writer
+admission queue. Readers may prevent full progress; incomplete attempts and errors
+are retried on the next interval, not in a hot loop. Rust `checkpoint_stats()`
+exposes attempt/incomplete counters, frame counts and the last error code, with
+no stored values or paths. Explicit checkpoints are not included in these counters.
+
+Rust `CheckpointPolicy` and Node embedded `checkpointPolicy` are active, with
+defaults of 16 MiB and 5 seconds. Thresholds must be positive; the interval is
+1..=4294967295 milliseconds. Node fields are limited to positive u32 integers.
+Daemon connections use the server's defaults, not client open settings.
+Dropping the Rust database disconnects and joins its worker before closing the
+other connections. This is resource cleanup, not yet a timeout-bounded public
+close/drain API; filesystem I/O can still delay shutdown. PASSIVE does not promise
+WAL truncation or a hard WAL size cap during long-lived reads.
 
 ## Roadmap boundaries
 

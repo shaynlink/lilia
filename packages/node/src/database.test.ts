@@ -11,6 +11,13 @@ import { Database, LiliaError, type DatabaseMode } from "./index.js";
 const nativePath = process.env.LILIA_NATIVE_PATH;
 const daemonBinary = process.env.LILIA_DAEMON_BIN;
 
+test("checkpoint policy rejects invalid values before opening native storage", async () => {
+  for (const value of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 32]) {
+    await assert.rejects(Database.open({ path: "unused.lilia", checkpointPolicy: { walBytes: value } }), RangeError);
+    await assert.rejects(Database.open({ path: "unused.lilia", checkpointPolicy: { intervalMs: value } }), RangeError);
+  }
+});
+
 test("embedded KV, JSON, and rollback conformance", { skip: !nativePath }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "lilia-node-"));
   try { await conformance("embedded", join(directory, "embedded.lilia")); }
@@ -36,7 +43,8 @@ test("daemon KV and JSON conformance", { skip: !daemonBinary }, async () => {
 });
 
 async function conformance(mode: DatabaseMode, path: string, endpoint?: string, tokenFile?: string): Promise<void> {
-  const database = await Database.open({ path, mode, endpoint, tokenFile });
+  const database = await Database.open({ path, mode, endpoint, tokenFile,
+    checkpointPolicy: mode === "embedded" ? { walBytes: 4096, intervalMs: 25 } : undefined });
   const bytes = new TextEncoder();
   try {
     const write = await database.kv.set("cache", bytes.encode("answer"), bytes.encode("42"), { ifVersion: 0n });
