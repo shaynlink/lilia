@@ -314,13 +314,11 @@ impl UserSecurity {
                             "token directory/file grants access beyond the current user",
                         ));
                     }
-                } else {
-                    if u32::from(ace.Header.AceFlags) & INHERIT_ONLY_ACE == 0
-                        && ace.Mask & ANCESTOR_MUTATION_RIGHTS != 0
-                        && !trusted(sid)
-                    {
-                        return Err(denied("token ancestor permits mutation by another user"));
-                    }
+                } else if u32::from(ace.Header.AceFlags) & INHERIT_ONLY_ACE == 0
+                    && ace.Mask & ANCESTOR_MUTATION_RIGHTS != 0
+                    && !trusted(sid)
+                {
+                    return Err(denied("token ancestor permits mutation by another user"));
                 }
             }
             Ok(())
