@@ -26,7 +26,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateDirectoryW, CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
     CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
     FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -182,7 +182,12 @@ impl UserSecurity {
         unsafe {
             let handle = CreateFileW(
                 path.as_ptr(),
-                READ_CONTROL | FILE_READ_ATTRIBUTES | if create { GENERIC_WRITE } else { 0 },
+                // A metadata-only handle does not participate in share-access
+                // checks. READ_DATA (LIST_DIRECTORY on folders) pins the name.
+                READ_CONTROL
+                    | FILE_READ_ATTRIBUTES
+                    | FILE_READ_DATA
+                    | if create { GENERIC_WRITE } else { 0 },
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 &raw const attributes,
                 if create { CREATE_NEW } else { OPEN_EXISTING },
@@ -395,16 +400,27 @@ fn information(file: &File) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
 }
 
 fn credential_path(path: &Path) -> io::Result<PathBuf> {
+    // GetFullPathName (used by absolute) can erase a trailing dot/space. Reject
+    // ambiguous input before normalization, then check the resolved path too.
+    validate_components(path)?;
+    let path = std::path::absolute(path)?;
+    validate_components(&path)?;
+    if !matches!(path.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+    {
+        return Err(denied("token path must be on a local drive"));
+    }
+    if path.file_name().is_none() {
+        return Err(denied("token requires a filename"));
+    }
+    Ok(path)
+}
+
+fn validate_components(path: &Path) -> io::Result<()> {
     if path
         .components()
         .any(|part| matches!(part, Component::ParentDir))
     {
         return Err(denied("token path must not contain traversal"));
-    }
-    let path = std::path::absolute(path)?;
-    if !matches!(path.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
-    {
-        return Err(denied("token path must be on a local drive"));
     }
     for part in path.components() {
         if let Component::Normal(name) = part {
@@ -416,10 +432,7 @@ fn credential_path(path: &Path) -> io::Result<PathBuf> {
             }
         }
     }
-    if path.file_name().is_none() {
-        return Err(denied("token requires a filename"));
-    }
-    Ok(path)
+    Ok(())
 }
 
 struct PendingFile(PathBuf);

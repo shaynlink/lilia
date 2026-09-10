@@ -4,23 +4,7 @@ fn assert_safe_ancestors(security: &UserSecurity, parent: &Path) {
     for path in parent.ancestors() {
         let file = security.open(path, false).unwrap();
         if let Err(error) = security.validate_security(&file, false) {
-            // ACL metadata only: never print credential contents on failure.
-            let acl = std::process::Command::new("powershell.exe")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "(Get-Acl -LiteralPath $env:LILIA_TEST_ACL_PATH).Sddl",
-                ])
-                .env("LILIA_TEST_ACL_PATH", path)
-                .output()
-                .unwrap();
-            panic!(
-                "unsafe test ancestor {}: {error}; ACL: {}",
-                path.display(),
-                String::from_utf8_lossy(&acl.stdout).to_string()
-                    + &String::from_utf8_lossy(&acl.stderr)
-            );
+            panic!("unsafe test ancestor {}: {error}", path.display());
         }
     }
 }
@@ -78,9 +62,12 @@ fn unsafe_token_inputs_are_rejected_without_modification() {
         r"C:\private\..\escape",
         r"C:\private\token:stream",
         r"C:\private\token.",
+        r"C:\private\token ",
+        r"C:\private.\token",
+        r"\\?\C:\private\token.",
         r"\\server\share\token",
     ] {
-        assert!(credential_path(Path::new(input)).is_err());
+        assert!(credential_path(Path::new(input)).is_err(), "{input}");
     }
 }
 
