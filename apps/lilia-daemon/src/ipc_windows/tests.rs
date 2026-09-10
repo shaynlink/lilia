@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "cross_account.rs"]
+mod cross_account;
+
 fn assert_safe_ancestors(security: &UserSecurity, parent: &Path) {
     for path in parent.ancestors() {
         let file = security.open(path, false).unwrap();
