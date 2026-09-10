@@ -2,6 +2,7 @@ mod checkpoint;
 mod engine;
 mod json;
 mod kv;
+mod lifecycle;
 mod storage;
 mod transaction;
 mod writer_queue;

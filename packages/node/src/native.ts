@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { BatchOperation, JsonEntry, KvEntry, MutationResult } from "./types.js";
+import { LiliaError } from "./types.js";
 
 interface NativeKvEntry { namespace: string; key: Buffer; value: Buffer; version: string; expiresAtMs?: number }
 interface NativeDatabaseHandle {
@@ -10,6 +11,7 @@ interface NativeDatabaseHandle {
   batch(operations: string): Promise<string>;
   integrityCheck(): Promise<boolean>;
   backup(destination: string): Promise<void>;
+  close(timeoutMs?: number): Promise<void>;
 }
 interface NativeModule { NativeDatabase: { open(options: Record<string, unknown>): Promise<NativeDatabaseHandle> } }
 
@@ -49,7 +51,17 @@ export class EmbeddedClient {
 
   integrityCheck(): Promise<boolean> { return this.native.integrityCheck(); }
   backup(destination: string): Promise<void> { return this.native.backup(destination); }
-  close(): Promise<void> { return Promise.resolve(); }
+  async close(timeoutMs?: number): Promise<void> {
+    try { await this.native.close(timeoutMs); }
+    catch (error) {
+      if (error instanceof Error) {
+        let shape;
+        try { shape = JSON.parse(error.message); } catch { throw error; }
+        if (typeof shape?.code === "string" && typeof shape?.message === "string") throw new LiliaError(shape);
+      }
+      throw error;
+    }
+  }
 }
 
 function loadNative(): NativeModule {

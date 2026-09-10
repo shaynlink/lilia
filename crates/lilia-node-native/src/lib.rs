@@ -213,6 +213,20 @@ impl NativeDatabase {
             .await
             .map_err(join_error)?
     }
+
+    #[napi]
+    pub async fn close(&self, timeout_ms: Option<u32>) -> Result<()> {
+        let database = Arc::clone(&self.inner);
+        let started = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(u64::from(timeout_ms.unwrap_or(5_000)));
+        tokio::task::spawn_blocking(move || {
+            database
+                .close(timeout.saturating_sub(started.elapsed()))
+                .map_err(napi_error)
+        })
+        .await
+        .map_err(join_error)?
+    }
 }
 
 fn napi_error(error: lilia_core::LiliaError) -> Error {

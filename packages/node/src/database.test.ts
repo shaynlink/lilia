@@ -11,6 +11,46 @@ import { Database, LiliaError, type DatabaseMode } from "./index.js";
 const nativePath = process.env.LILIA_NATIVE_PATH;
 const daemonBinary = process.env.LILIA_DAEMON_BIN;
 
+test("close timeout drains accepted JS calls and can be awaited again", async () => {
+  let release!: (value: []) => void;
+  let closes = 0;
+  const delayed = new Promise<[]>((resolve) => { release = resolve; });
+  // Inject a deterministic delayed client through the runtime constructor. No
+  // native timing assumptions are needed to exercise the SDK admission boundary.
+  const database = Reflect.construct(Database, [{
+    batch: () => delayed,
+    close: async () => { closes += 1; },
+  }]) as Database;
+  await assert.rejects(database.close({ timeoutMs: -1 }), RangeError);
+  const accepted = database.batch([]);
+  await assert.rejects(database.close({ timeoutMs: 0 }), (error: unknown) =>
+    error instanceof LiliaError && error.code === "TIMEOUT" && error.retryable && !!error.requestId);
+  assert.equal(closes, 0);
+  await assert.rejects(database.batch([]), (error: unknown) =>
+    error instanceof LiliaError && error.code === "CLOSED" && !!error.requestId);
+  release([]);
+  await accepted;
+  await Promise.all([database.close(), database.close()]);
+  assert.equal(closes, 1);
+});
+
+test("embedded close drains submitted writes and releases storage", { skip: !nativePath }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lilia-close-"));
+  const path = join(directory, "db.lilia");
+  try {
+    const database = await Database.open({ path });
+    const writes = Array.from({ length: 16 }, (_, index) =>
+      database.json.put("drain", String(index), { index }));
+    await database.close();
+    await Promise.all(writes);
+    const reopened = await Database.open({ path });
+    try {
+      assert.equal((await reopened.json.scan("drain")).length, 16);
+      assert.equal(await reopened.integrityCheck(), true);
+    } finally { await reopened.close(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("checkpoint policy rejects invalid values before opening native storage", async () => {
   for (const value of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 32]) {
     await assert.rejects(Database.open({ path: "unused.lilia", checkpointPolicy: { walBytes: value } }), RangeError);
@@ -65,6 +105,8 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
   } finally {
     await database.close();
   }
+  await assert.rejects(database.integrityCheck(), (error: unknown) =>
+    error instanceof LiliaError && error.code === "CLOSED");
 }
 
 async function waitUntilReady(tokenFile: string, endpoint: string, daemon: ChildProcess): Promise<void> {

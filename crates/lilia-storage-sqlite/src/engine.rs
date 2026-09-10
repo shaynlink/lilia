@@ -3,12 +3,13 @@
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
 use crate::checkpoint::{CheckpointStats, Checkpointer};
+use crate::lifecycle::{Lifecycle, Operation};
 use crate::storage::{migrate, prepare_parent, secure_database_file};
 use crate::transaction::apply;
 use crate::writer_queue::{Permit, WriterQueue};
@@ -48,31 +49,42 @@ impl DatabaseOptions {
 
 #[derive(Debug)]
 pub struct Database {
-    // Stop/join maintenance before dropping the database connections.
-    checkpointer: Checkpointer,
     path: PathBuf,
-    writer: Mutex<Connection>,
-    readers: Vec<Mutex<Connection>>,
+    lifecycle: Arc<Lifecycle>,
+    resources: Arc<Resources>,
+}
+
+#[derive(Debug)]
+struct Resources {
+    // Stop/join maintenance before dropping the database connections.
+    checkpointer: Mutex<Option<Checkpointer>>,
+    writer: Mutex<Option<Connection>>,
+    readers: Vec<Mutex<Option<Connection>>>,
     next_reader: AtomicUsize,
     writer_queue: WriterQueue,
 }
 
 pub(crate) struct WriterGuard<'a> {
     // Drop the connection lock before making the next FIFO permit available.
-    connection: MutexGuard<'a, Connection>,
-    _permit: Permit<'a>,
+    connection: MutexGuard<'a, Option<Connection>>,
+    _permit: Option<Permit<'a>>,
+    _operation: Operation<'a>,
 }
 
 impl Deref for WriterGuard<'_> {
     type Target = Connection;
     fn deref(&self) -> &Connection {
-        &self.connection
+        self.connection
+            .as_ref()
+            .expect("admitted connection must remain open")
     }
 }
 
 impl DerefMut for WriterGuard<'_> {
     fn deref_mut(&mut self) -> &mut Connection {
-        &mut self.connection
+        self.connection
+            .as_mut()
+            .expect("admitted connection must remain open")
     }
 }
 
@@ -108,28 +120,44 @@ impl Database {
             reader.busy_timeout(std::time::Duration::from_millis(options.busy_timeout_ms))?;
             reader.pragma_update(None, "journal_mode", "WAL")?;
             reader.pragma_update(None, "query_only", true)?;
-            readers.push(Mutex::new(reader));
+            readers.push(Mutex::new(Some(reader)));
         }
         Ok(Self {
-            checkpointer: Checkpointer::start(
-                &options.path,
-                options.checkpoint_policy,
-                synchronous,
-            )?,
+            lifecycle: Arc::new(Lifecycle::default()),
+            resources: Arc::new(Resources {
+                checkpointer: Mutex::new(Some(Checkpointer::start(
+                    &options.path,
+                    options.checkpoint_policy,
+                    synchronous,
+                )?)),
+                writer: Mutex::new(Some(connection)),
+                readers,
+                next_reader: AtomicUsize::new(0),
+                writer_queue: WriterQueue::new(options.writer_queue_capacity),
+            }),
             path: options.path,
-            writer: Mutex::new(connection),
-            readers,
-            next_reader: AtomicUsize::new(0),
-            writer_queue: WriterQueue::new(options.writer_queue_capacity),
         })
     }
 
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     pub fn checkpoint_stats(&self) -> CheckpointStats {
-        self.checkpointer.stats()
+        self.resources
+            .checkpointer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(Checkpointer::stats)
+            .unwrap_or_default()
+    }
+
+    /// Stop admission and wait at most `timeout`; cleanup continues after TIMEOUT.
+    pub fn close(&self, timeout: Duration) -> Result<()> {
+        let resources = Arc::clone(&self.resources);
+        self.lifecycle.close(timeout, move || resources.close())
     }
 
     pub fn integrity_check(&self) -> Result<bool> {
@@ -146,6 +174,8 @@ impl Database {
     }
 
     pub fn backup(&self, destination: impl AsRef<Path>) -> Result<()> {
+        // Admission covers validation, snapshotting and publication, not only SQL.
+        let source = self.lock_writer()?;
         let destination = destination.as_ref();
         if destination == self.path {
             return Err(LiliaError::new(
@@ -180,12 +210,10 @@ impl Database {
         let temporary = staging.path().join("snapshot.lilia");
         let mut output = Connection::open(&temporary)?;
         secure_database_file(&temporary)?;
-        let source = self.lock_writer()?;
         let backup = rusqlite::backup::Backup::new(&source, &mut output)?;
         backup.run_to_completion(128, std::time::Duration::from_millis(10), None)?;
         drop(backup);
         let integrity: String = output.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        drop(source);
         output
             .close()
             .map_err(|(_, error)| LiliaError::from(error))?;
@@ -253,7 +281,15 @@ impl Database {
             .collect::<Result<Vec<_>>>()?;
         transaction.commit()?;
         drop(connection);
-        self.checkpointer.notify();
+        if let Some(checkpointer) = self
+            .resources
+            .checkpointer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            checkpointer.notify();
+        }
         Ok(results)
     }
 
@@ -262,22 +298,70 @@ impl Database {
     }
 
     fn writer_lock(&self, deadline: Option<Instant>) -> Result<WriterGuard<'_>> {
-        let permit = self.writer_queue.acquire(deadline)?;
-        let connection = self
-            .writer
-            .lock()
-            .map_err(|_| LiliaError::new(ErrorCode::Storage, "database lock poisoned", false))?;
+        let operation = self.lifecycle.enter()?;
+        let permit = self.resources.writer_queue.acquire(deadline)?;
+        let connection =
+            self.resources.writer.lock().map_err(|_| {
+                LiliaError::new(ErrorCode::Storage, "database lock poisoned", false)
+            })?;
         Ok(WriterGuard {
             connection,
-            _permit: permit,
+            _permit: Some(permit),
+            _operation: operation,
         })
     }
 
-    pub(crate) fn read_lock(&self) -> Result<MutexGuard<'_, Connection>> {
-        let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
-        self.readers[index]
+    pub(crate) fn read_lock(&self) -> Result<WriterGuard<'_>> {
+        let operation = self.lifecycle.enter()?;
+        let index = self.resources.next_reader.fetch_add(1, Ordering::Relaxed)
+            % self.resources.readers.len();
+        let connection = self.resources.readers[index].lock().map_err(|_| {
+            LiliaError::new(ErrorCode::Storage, "read database lock poisoned", false)
+        })?;
+        Ok(WriterGuard {
+            connection,
+            _permit: None,
+            _operation: operation,
+        })
+    }
+}
+
+impl Resources {
+    fn close(&self) -> Result<()> {
+        // No admitted operations remain. Potentially slow I/O runs on the cleanup
+        // thread so the caller's timeout is independent of filesystem progress.
+        let worker = self
+            .checkpointer
             .lock()
-            .map_err(|_| LiliaError::new(ErrorCode::Storage, "read database lock poisoned", false))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(worker);
+        let mut result = Ok(());
+        for reader in &self.readers {
+            if let Some(reader) = reader
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let closed = reader.close().map_err(|(_, error)| LiliaError::from(error));
+                result = result.and(closed);
+            }
+        }
+        if let Some(writer) = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            let checkpoint = writer
+                .busy_timeout(Duration::ZERO)
+                .and_then(|()| writer.execute_batch("PRAGMA wal_checkpoint(PASSIVE)"))
+                .map_err(LiliaError::from);
+            result = result.and(checkpoint);
+            let closed = writer.close().map_err(|(_, error)| LiliaError::from(error));
+            result = result.and(closed);
+        }
+        result
     }
 }
 

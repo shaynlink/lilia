@@ -127,7 +127,8 @@ without starting its transaction. Once a transaction starts, its actual outcome
 is returned rather than reporting a timeout that could conceal a commit.
 The queue is per database handle (not a cross-process scheduler); SQLite still
 arbitrates writers from other handles/processes via the configured busy timeout.
-Bounded close/drain remains a subsequent lifecycle lot.
+Backups retain admission through snapshot verification and publication, so closing
+also waits for their filesystem work to finish.
 
 ## Automatic checkpoints
 
@@ -147,10 +148,31 @@ Rust `CheckpointPolicy` and Node embedded `checkpointPolicy` are active, with
 defaults of 16 MiB and 5 seconds. Thresholds must be positive; the interval is
 1..=4294967295 milliseconds. Node fields are limited to positive u32 integers.
 Daemon connections use the server's defaults, not client open settings.
-Dropping the Rust database disconnects and joins its worker before closing the
-other connections. This is resource cleanup, not yet a timeout-bounded public
-close/drain API; filesystem I/O can still delay shutdown. PASSIVE does not promise
-WAL truncation or a hard WAL size cap during long-lived reads.
+PASSIVE does not promise WAL truncation or a hard WAL size cap during long-lived
+reads. After explicit close, `checkpoint_stats()` returns default counters because
+the maintenance service has been released.
+
+## Explicit close and drain
+
+Rust `Database::close(Duration)` stops new operation admission with `CLOSED`, drains
+accepted readers and queued writers, stops the maintenance worker, performs a final
+PASSIVE checkpoint and closes all connections. Cleanup runs on a separate thread;
+the timeout bounds the caller's wait, not filesystem I/O. A retryable `TIMEOUT`
+does not cancel accepted writes or reopen admission. Calling close again waits for
+the same cleanup and returns its stored outcome. Success means the handle has
+released its connections; external readers may still pin WAL frames.
+
+Node `db.close({ timeoutMs })` defaults to 5000 ms and accepts integer budgets from
+0 through 2147483647 ms. It also drains calls accepted in JavaScript before they
+reach a native worker. New operations fail with a structured `CLOSED` error;
+close timeouts have a request ID and are retryable. Closing a daemon SDK client
+drains that client's calls but does not shut down the shared server.
+
+Authenticated daemon shutdown stops accepting connections and requests database
+close with a five-second wait budget. The shutdown response acknowledges the
+request, not completed cleanup. Runtime blocking work may delay process exit;
+abrupt signals and process kills are not a graceful-drain guarantee. Implicit Rust
+drop still performs synchronous resource cleanup without a caller timeout.
 
 ## Roadmap boundaries
 

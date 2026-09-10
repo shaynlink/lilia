@@ -17,6 +17,7 @@ pub struct LiliaError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
+    Closed,
     Busy,
     Conflict,
     Corrupt,
