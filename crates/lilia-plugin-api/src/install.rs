@@ -82,9 +82,9 @@ fn copy_entry(
     Ok(())
 }
 
-fn prepare_install_root(path: &Path) -> Result<(), PluginApiError> {
+pub(crate) fn prepare_install_root(path: &Path) -> Result<(), PluginApiError> {
     if !path.exists() {
-        create_private_directory(path)?;
+        create_private_tree(path)?;
     }
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
@@ -104,7 +104,28 @@ fn prepare_install_root(path: &Path) -> Result<(), PluginApiError> {
     Ok(())
 }
 
-fn create_private_directory(path: &Path) -> Result<(), PluginApiError> {
+fn create_private_tree(path: &Path) -> Result<(), PluginApiError> {
+    let mut missing = Vec::new();
+    let mut cursor = path;
+    while !cursor.exists() {
+        missing.push(cursor.to_path_buf());
+        cursor = cursor.parent().ok_or_else(|| {
+            PluginApiError::Invalid("plugin root has no existing ancestor".into())
+        })?;
+    }
+    let ancestor = fs::symlink_metadata(cursor)?;
+    if !ancestor.file_type().is_dir() || ancestor.file_type().is_symlink() {
+        return Err(PluginApiError::Invalid(
+            "plugin root ancestor must be a real directory".into(),
+        ));
+    }
+    for directory in missing.into_iter().rev() {
+        create_private_directory(&directory)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn create_private_directory(path: &Path) -> Result<(), PluginApiError> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(false);
     #[cfg(unix)]
@@ -117,7 +138,7 @@ fn create_private_directory(path: &Path) -> Result<(), PluginApiError> {
 }
 
 #[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
-fn set_private_file(path: &Path) -> Result<(), PluginApiError> {
+pub(crate) fn set_private_file(path: &Path) -> Result<(), PluginApiError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -129,7 +150,7 @@ fn set_private_file(path: &Path) -> Result<(), PluginApiError> {
 }
 
 #[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
-fn sync_directory(path: &Path) -> Result<(), PluginApiError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), PluginApiError> {
     #[cfg(unix)]
     File::open(path)?.sync_all()?;
     #[cfg(not(unix))]
