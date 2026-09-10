@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -94,41 +93,49 @@ fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::L
     if arguments.allow_unsigned_plugins && !arguments.development {
         anyhow::bail!("--allow-unsigned-plugins requires explicit --development mode");
     }
-
-    let mut encoded_keys = arguments.trusted_keys.clone();
-    if let Some(root) = &arguments.plugin_root {
-        let path = root.join("trust-keys.json");
-        if path.exists() {
-            encoded_keys.extend(serde_json::from_slice::<Vec<String>>(&fs::read(path)?)?);
-        }
+    if arguments.plugin_root.is_some() && !arguments.development {
+        anyhow::bail!("--plugin-root requires explicit --development mode");
     }
-    let trusted_keys = encoded_keys
-        .iter()
-        .map(|encoded| {
-            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
-            let bytes: [u8; 32] = bytes
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("trusted keys must be 32 bytes"))?;
-            ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(Into::into)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    if !arguments.trusted_keys.is_empty() && !arguments.development {
+        anyhow::bail!("--trusted-key requires explicit --development mode");
+    }
+    if arguments.plugins.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let root = arguments
+        .plugin_root
+        .clone()
+        .map_or_else(lilia_plugin_api::default_plugin_root, Ok)?;
+    let mut trusted_keys = lilia_plugin_api::TrustStore::open(&root)?.keys()?;
+    trusted_keys.extend(
+        arguments
+            .trusted_keys
+            .iter()
+            .map(|encoded| {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("trusted keys must be 32 bytes"))?;
+                ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(Into::into)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    );
+    let canonical_root = root.canonicalize()?;
     arguments
         .plugins
         .iter()
         .map(|path| {
-            if let Some(root) = &arguments.plugin_root {
-                let canonical_root = root.canonicalize()?;
-                let canonical_plugin = path.canonicalize()?;
-                if !canonical_plugin.starts_with(canonical_root) {
-                    anyhow::bail!("plugin path is outside the authorized plugin root");
-                }
+            let canonical_plugin = path.canonicalize()?;
+            if !canonical_plugin.starts_with(&canonical_root) {
+                anyhow::bail!("plugin path is outside the authorized plugin root");
             }
             let manifest = lilia_plugin_api::verify_package(
-                path,
+                &canonical_plugin,
                 &trusted_keys,
                 arguments.allow_unsigned_plugins,
             )?;
-            load_trusted_descriptor(path, &manifest)
+            load_trusted_descriptor(&canonical_plugin, &manifest)
         })
         .collect()
 }

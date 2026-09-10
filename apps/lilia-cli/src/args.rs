@@ -13,7 +13,7 @@ pub(crate) struct Arguments {
     pub(crate) command: Command,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Output {
     Human,
     Json,
@@ -151,7 +151,8 @@ pub(crate) enum PluginCommand {
     },
     Install {
         package: PathBuf,
-        root: PathBuf,
+        #[arg(long)]
+        root: Option<PathBuf>,
         #[arg(long = "trusted-key")]
         trusted_keys: Vec<String>,
         #[arg(long)]
@@ -161,17 +162,42 @@ pub(crate) enum PluginCommand {
         development: bool,
     },
     List {
-        root: PathBuf,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        development: bool,
     },
     Remove {
-        root: PathBuf,
         installed_name: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        development: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TrustCommand {
-    Add { root: PathBuf, key: String },
-    List { root: PathBuf },
-    Remove { root: PathBuf, fingerprint: String },
+    Add {
+        key: String,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        development: bool,
+    },
+    List {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        development: bool,
+    },
+    Remove {
+        fingerprint: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        development: bool,
+    },
 }

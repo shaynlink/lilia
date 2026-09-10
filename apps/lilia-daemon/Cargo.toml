@@ -16,7 +16,6 @@ lilia-storage-sqlite = { path = "../../crates/lilia-storage-sqlite" }
 lilia-plugin-api = { path = "../../crates/lilia-plugin-api" }
 lilia-protocol = { path = "../../crates/lilia-protocol" }
 rand.workspace = true
-serde_json.workspace = true
 subtle = "2.6.1"
 tokio.workspace = true
 tracing.workspace = true

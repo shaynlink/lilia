@@ -1,5 +1,7 @@
 use super::*;
 
+use std::fs;
+
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 #[test]
@@ -16,6 +18,53 @@ fn unsigned_plugins_require_explicit_development_mode() {
     };
     let error = load_plugins(&arguments).expect_err("unsigned mode must fail closed");
     assert!(error.to_string().contains("--development"));
+}
+
+#[test]
+fn production_rejects_plugin_root_and_inline_key_overrides() {
+    let mut arguments = Arguments {
+        database: PathBuf::from("database.lilia"),
+        endpoint: PathBuf::from("endpoint"),
+        token_file: PathBuf::from("token"),
+        plugins: Vec::new(),
+        trusted_keys: Vec::new(),
+        plugin_root: Some(PathBuf::from("custom")),
+        allow_unsigned_plugins: false,
+        development: false,
+    };
+    assert!(load_plugins(&arguments)
+        .expect_err("root override must fail")
+        .to_string()
+        .contains("--development"));
+    arguments.plugin_root = None;
+    arguments.trusted_keys.push("key".into());
+    assert!(load_plugins(&arguments)
+        .expect_err("key override must fail")
+        .to_string()
+        .contains("--development"));
+}
+
+#[test]
+fn development_root_still_rejects_plugins_outside_it() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("plugins");
+    let outside = directory.path().join("outside");
+    fs::create_dir(&outside).expect("outside package");
+    let arguments = Arguments {
+        database: PathBuf::from("database.lilia"),
+        endpoint: PathBuf::from("endpoint"),
+        token_file: PathBuf::from("token"),
+        plugins: vec![outside],
+        trusted_keys: Vec::new(),
+        plugin_root: Some(root),
+        allow_unsigned_plugins: true,
+        development: true,
+    };
+
+    assert!(load_plugins(&arguments)
+        .expect_err("outside package must fail")
+        .to_string()
+        .contains("outside the authorized plugin root"));
 }
 
 #[cfg(unix)]

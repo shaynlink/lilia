@@ -39,7 +39,20 @@ Each library exports `lilia_plugin_v1` using the C ABI and returns `PluginDescri
 panic, owned Rust value, or allocator boundary may cross the interface. Capability bits `1` and `2`
 currently identify KV and JSON.
 
-Official packages will use an embedded release trust key. Operators can pass additional verifying
-keys explicitly. Unsigned packages fail closed by default. The CLI requires both
-`--allow-unsigned --development`; the daemon equivalently requires
+Official packages will use an embedded release trust key once that public key is provisioned.
+Additional keys live in the per-user trust store shared by the CLI and daemon:
+
+- macOS: `~/Library/Application Support/LiliaDB/plugins/.trust`;
+- Linux: `$XDG_DATA_HOME/liliadb/plugins/.trust`, or `~/.local/share/liliadb/plugins/.trust`;
+- Windows: `%LOCALAPPDATA%\\LiliaDB\\plugins\\.trust`.
+
+`lilia plugin trust add <base64-public-key>` displays its SHA-256 fingerprint and requires an
+interactive confirmation; structured and non-interactive callers must pass `--yes`. Listing returns
+fingerprints only. Each key is staged privately and atomically published as `<fingerprint>.pub`, so
+an interrupted addition is ignored. Symlinked, malformed, public-on-Unix, and fingerprint-mismatched
+stores are rejected.
+
+Production always installs and loads from this OS-specific root. Alternate roots and inline
+`--trusted-key` values require `--development`. Unsigned packages fail closed by default; the CLI
+requires both `--allow-unsigned --development`, and the daemon equivalently requires
 `--allow-unsigned-plugins --development`. Production launchers must never enable these pairs.

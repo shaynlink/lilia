@@ -34,7 +34,7 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let value = match arguments.command {
-        Command::Plugin { command } => plugins::execute(command)?,
+        Command::Plugin { command } => plugins::execute(command, arguments.output)?,
         Command::Daemon { command } => daemon::execute(command, &arguments.database)?,
         command => models::execute(command, &arguments.database)?,
     };

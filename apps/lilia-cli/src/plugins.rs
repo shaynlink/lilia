@@ -1,26 +1,32 @@
 use std::fs;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use ed25519_dalek::VerifyingKey;
-use lilia_plugin_api::{install_verified, verify_package};
+use lilia_plugin_api::{
+    default_plugin_root, install_verified, trust_store_fingerprint, verify_package, TrustStore,
+};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
-use crate::args::{PluginCommand, TrustCommand};
+use crate::args::{Output, PluginCommand, TrustCommand};
 
-pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
+pub(crate) fn execute(command: PluginCommand, output: Output) -> anyhow::Result<Value> {
     match command {
         PluginCommand::Verify {
             package,
             trusted_keys,
             allow_unsigned,
             development,
-        } => Ok(serde_json::to_value(verify_package(
-            &package,
-            &decode_keys(&trusted_keys)?,
-            unsigned_policy(allow_unsigned, development)?,
-        )?)?),
-        PluginCommand::Trust { command } => trust(command),
+        } => {
+            let root = default_plugin_root()?;
+            Ok(serde_json::to_value(verify_package(
+                &package,
+                &verification_keys(Some(&root), &trusted_keys, development)?,
+                unsigned_policy(allow_unsigned, development)?,
+            )?)?)
+        }
+        PluginCommand::Trust { command } => trust(command, output),
         PluginCommand::Install {
             package,
             root,
@@ -28,19 +34,24 @@ pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
             allow_unsigned,
             development,
         } => {
+            let root = selected_root(root, development)?;
             let path = install_verified(
                 &package,
                 &root,
-                &decode_keys(&trusted_keys)?,
+                &verification_keys(Some(&root), &trusted_keys, development)?,
                 unsigned_policy(allow_unsigned, development)?,
             )?;
             Ok(json!({"installed": path}))
         }
-        PluginCommand::List { root } => Ok(json!(installed_names(&root)?)),
+        PluginCommand::List { root, development } => {
+            Ok(json!(installed_names(&selected_root(root, development)?)?))
+        }
         PluginCommand::Remove {
             root,
             installed_name,
+            development,
         } => {
+            let root = selected_root(root, development)?;
             if installed_name.contains('/')
                 || installed_name.contains('\\')
                 || installed_name.starts_with('.')
@@ -57,9 +68,96 @@ pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
     }
 }
 
-fn installed_names(root: &std::path::Path) -> anyhow::Result<Vec<String>> {
+fn trust(command: TrustCommand, output: Output) -> anyhow::Result<Value> {
+    match command {
+        TrustCommand::Add {
+            key,
+            yes,
+            root,
+            development,
+        } => {
+            let key = decode_key(&key)?;
+            let fingerprint = trust_store_fingerprint(&key);
+            confirm_add(&fingerprint, yes, output)?;
+            let store = TrustStore::open(&selected_root(root, development)?)?;
+            let added = store.add(&key)?;
+            Ok(json!({"fingerprint": fingerprint, "added": added}))
+        }
+        TrustCommand::List { root, development } => {
+            let store = TrustStore::open(&selected_root(root, development)?)?;
+            Ok(serde_json::to_value(store.entries()?)?)
+        }
+        TrustCommand::Remove {
+            fingerprint,
+            root,
+            development,
+        } => {
+            let store = TrustStore::open(&selected_root(root, development)?)?;
+            let removed = store.remove(&fingerprint)?;
+            Ok(json!({"fingerprint": fingerprint, "removed": removed}))
+        }
+    }
+}
+
+fn confirm_add(fingerprint: &str, yes: bool, output: Output) -> anyhow::Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if output != Output::Human || !io::stdin().is_terminal() {
+        anyhow::bail!("trust add requires --yes in structured or non-interactive mode");
+    }
+    eprint!("Trust plugin signing key {fingerprint}? [y/N] ");
+    io::stderr().flush()?;
+    let mut response = String::new();
+    io::stdin().read_line(&mut response)?;
+    if !matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        anyhow::bail!("trust key addition cancelled");
+    }
+    Ok(())
+}
+
+fn selected_root(root: Option<PathBuf>, development: bool) -> anyhow::Result<PathBuf> {
+    match root {
+        Some(_) if !development => anyhow::bail!("--root requires explicit --development mode"),
+        Some(root) => Ok(root),
+        None => Ok(default_plugin_root()?),
+    }
+}
+
+fn verification_keys(
+    root: Option<&Path>,
+    encoded: &[String],
+    development: bool,
+) -> anyhow::Result<Vec<VerifyingKey>> {
+    if !encoded.is_empty() && !development {
+        anyhow::bail!("--trusted-key requires explicit --development mode");
+    }
+    let mut keys = root
+        .map(TrustStore::open)
+        .transpose()?
+        .map(|store| store.keys())
+        .transpose()?
+        .unwrap_or_default();
+    keys.extend(
+        encoded
+            .iter()
+            .map(|value| decode_key(value))
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    );
+    Ok(keys)
+}
+
+fn decode_key(encoded: &str) -> anyhow::Result<VerifyingKey> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("trusted keys must be 32 bytes"))?;
+    VerifyingKey::from_bytes(&bytes).map_err(Into::into)
+}
+
+fn installed_names(root: &Path) -> anyhow::Result<Vec<String>> {
     match fs::symlink_metadata(root) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
         Ok(_) => require_real_directory(root, "plugin root")?,
     }
@@ -82,7 +180,7 @@ fn installed_names(root: &std::path::Path) -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
-fn require_real_directory(path: &std::path::Path, label: &str) -> anyhow::Result<()> {
+fn require_real_directory(path: &Path, label: &str) -> anyhow::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         anyhow::bail!("{label} must be a real directory");
@@ -97,93 +195,35 @@ fn unsigned_policy(allow_unsigned: bool, development: bool) -> anyhow::Result<bo
     Ok(allow_unsigned)
 }
 
-fn trust(command: TrustCommand) -> anyhow::Result<Value> {
-    match command {
-        TrustCommand::Add { root, key } => {
-            let decoded = decode_keys(std::slice::from_ref(&key))?;
-            let fingerprint = hex::encode(Sha256::digest(decoded[0].as_bytes()));
-            fs::create_dir_all(&root)?;
-            let path = root.join("trust-keys.json");
-            let mut keys: Vec<String> = if path.exists() {
-                serde_json::from_slice(&fs::read(&path)?)?
-            } else {
-                Vec::new()
-            };
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-            fs::write(&path, serde_json::to_vec_pretty(&keys)?)?;
-            Ok(json!({"added": fingerprint}))
-        }
-        TrustCommand::List { root } => {
-            let path = root.join("trust-keys.json");
-            let keys: Vec<String> = if path.exists() {
-                serde_json::from_slice(&fs::read(path)?)?
-            } else {
-                Vec::new()
-            };
-            Ok(json!(keys
-                .into_iter()
-                .map(|key| {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&key)
-                        .unwrap_or_default();
-                    json!({"fingerprint": hex::encode(Sha256::digest(bytes)), "key": key})
-                })
-                .collect::<Vec<_>>()))
-        }
-        TrustCommand::Remove { root, fingerprint } => {
-            let path = root.join("trust-keys.json");
-            let mut keys: Vec<String> = serde_json::from_slice(&fs::read(&path)?)?;
-            keys.retain(|key| {
-                hex::encode(Sha256::digest(
-                    base64::engine::general_purpose::STANDARD
-                        .decode(key)
-                        .unwrap_or_default(),
-                )) != fingerprint
-            });
-            fs::write(&path, serde_json::to_vec_pretty(&keys)?)?;
-            Ok(json!({"removed": fingerprint}))
-        }
-    }
-}
-
-fn decode_keys(encoded: &[String]) -> anyhow::Result<Vec<VerifyingKey>> {
-    encoded
-        .iter()
-        .map(|value| {
-            let bytes = base64::engine::general_purpose::STANDARD.decode(value)?;
-            let bytes: [u8; 32] = bytes
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("trusted keys must be 32 bytes"))?;
-            VerifyingKey::from_bytes(&bytes).map_err(Into::into)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     #[cfg(unix)]
     use super::require_real_directory;
-    use super::{installed_names, unsigned_policy};
+    use super::{confirm_add, installed_names, selected_root, unsigned_policy, Output};
 
     #[test]
-    fn unsigned_policy_requires_explicit_development_mode() {
+    fn production_rejects_root_and_unsigned_overrides() {
+        assert!(selected_root(Some("custom".into()), false).is_err());
         assert!(unsigned_policy(true, false).is_err());
         assert!(unsigned_policy(true, true).expect("development mode"));
         assert!(!unsigned_policy(false, false).expect("signed policy"));
     }
 
     #[test]
-    fn listing_ignores_incomplete_and_hidden_installations() {
+    fn structured_trust_add_requires_confirmation_flag() {
+        assert!(confirm_add("fingerprint", false, Output::Json).is_err());
+        assert!(confirm_add("fingerprint", true, Output::Json).is_ok());
+    }
+
+    #[test]
+    fn listing_ignores_trust_store_and_incomplete_installations() {
         let directory = tempfile::tempdir().expect("temporary root");
         fs::create_dir_all(directory.path().join("valid/package")).expect("valid package");
         fs::write(directory.path().join("valid/package/manifest.json"), b"{}").expect("manifest");
         fs::create_dir(directory.path().join("incomplete")).expect("incomplete install");
-        fs::create_dir(directory.path().join(".installing-stale")).expect("staging");
-        fs::write(directory.path().join("plain-file"), b"value").expect("plain file");
+        fs::create_dir(directory.path().join(".trust")).expect("trust store");
 
         assert_eq!(
             installed_names(directory.path()).expect("installed names"),
