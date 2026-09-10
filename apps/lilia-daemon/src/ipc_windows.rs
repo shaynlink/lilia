@@ -19,8 +19,8 @@ use windows_sys::Win32::Security::Authorization::{
 use windows_sys::Win32::Security::{
     EqualSid, GetAce, GetSecurityDescriptorControl, GetSecurityDescriptorOwner,
     GetTokenInformation, IsWellKnownSid, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
-    ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE, OWNER_SECURITY_INFORMATION,
-    SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE,
+    OWNER_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateDirectoryW, CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
@@ -34,6 +34,16 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 #[cfg(test)]
 #[path = "ipc_windows/tests.rs"]
 mod tests;
+
+const ANCESTOR_MUTATION_RIGHTS: u32 = GENERIC_ALL
+    | GENERIC_WRITE
+    | WRITE_DAC
+    | WRITE_OWNER
+    | DELETE
+    | FILE_DELETE_CHILD
+    | FILE_WRITE_ATTRIBUTES
+    | FILE_WRITE_EA
+    | FILE_WRITE_DATA;
 
 fn denied(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, message)
@@ -53,6 +63,16 @@ fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
 
 #[derive(Debug)]
 struct LocalMemory(*mut c_void);
+
+fn parse_sid(value: &str) -> io::Result<LocalMemory> {
+    let encoded = wide(OsStr::new(value))?;
+    let mut sid = std::ptr::null_mut();
+    // SAFETY: valid string and output slot. The returned allocation is guarded.
+    if unsafe { ConvertStringSidToSidW(encoded.as_ptr(), &raw mut sid) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(LocalMemory(sid))
+}
 
 impl Drop for LocalMemory {
     fn drop(&mut self) {
@@ -239,46 +259,51 @@ impl UserSecurity {
             }
             // Windows Modules Installer owns standard system ancestors (including
             // drive roots). Trust this exact privileged service SID, not all services.
-            let installer = wide(OsStr::new(
-                "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
-            ))?;
-            let mut installer_sid = std::ptr::null_mut();
-            if ConvertStringSidToSidW(installer.as_ptr(), &raw mut installer_sid) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let _installer_memory = LocalMemory(installer_sid);
+            let installer =
+                parse_sid("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")?;
             let trusted = |sid| {
                 EqualSid(sid, expected) != 0
-                    || EqualSid(sid, installer_sid) != 0
+                    || EqualSid(sid, installer.0) != 0
                     || IsWellKnownSid(sid, WinLocalSystemSid) != 0
                     || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0
             };
+            let acl_ref = acl
+                .as_ref()
+                .ok_or_else(|| denied("missing token path DACL"))?;
             if owner.is_null()
-                || acl.is_null()
                 || !trusted(owner)
                 || (private
                     && (EqualSid(owner, expected) == 0
                         || control & SE_DACL_PROTECTED == 0
-                        || (*acl).AceCount != 1))
+                        || acl_ref.AceCount != 1))
             {
                 return Err(denied(
                     "token directory/file must have a protected current-user-only DACL",
                 ));
             }
-            for index in 0..u32::from((*acl).AceCount) {
+            for index in 0..u32::from(acl_ref.AceCount) {
                 let mut ace = std::ptr::null_mut();
                 if GetAce(acl, index, &raw mut ace) == 0 {
                     return Err(io::Error::last_os_error());
                 }
-                let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+                let header = ace
+                    .cast::<ACE_HEADER>()
+                    .as_ref()
+                    .ok_or_else(|| denied("missing token path ACL entry"))?;
                 // Deny entries cannot expand access. Unknown/object/callback ACEs
                 // are refused rather than attempting to reinterpret their layout.
-                if !private && ace.Header.AceType == 1 {
+                if !private && header.AceType == 1 {
                     continue;
                 }
-                if ace.Header.AceType != 0 {
+                if header.AceType != 0
+                    || usize::from(header.AceSize) < std::mem::size_of::<ACCESS_ALLOWED_ACE>()
+                {
                     return Err(denied("unsupported token path ACL entry"));
                 }
+                let ace = ace
+                    .cast::<ACCESS_ALLOWED_ACE>()
+                    .as_ref()
+                    .ok_or_else(|| denied("missing token path ACL entry"))?;
                 let sid = (&raw const ace.SidStart).cast_mut().cast();
                 if private {
                     if ace.Header.AceFlags != 0
@@ -290,17 +315,8 @@ impl UserSecurity {
                         ));
                     }
                 } else {
-                    let mutation = GENERIC_ALL
-                        | GENERIC_WRITE
-                        | WRITE_DAC
-                        | WRITE_OWNER
-                        | DELETE
-                        | FILE_DELETE_CHILD
-                        | FILE_WRITE_ATTRIBUTES
-                        | FILE_WRITE_EA
-                        | FILE_WRITE_DATA;
                     if u32::from(ace.Header.AceFlags) & INHERIT_ONLY_ACE == 0
-                        && ace.Mask & mutation != 0
+                        && ace.Mask & ANCESTOR_MUTATION_RIGHTS != 0
                         && !trusted(sid)
                     {
                         return Err(denied("token ancestor permits mutation by another user"));
