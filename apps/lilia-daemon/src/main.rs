@@ -10,8 +10,6 @@ use lilia_protocol::{
     PROTOCOL_MINOR,
 };
 use lilia_storage_sqlite::{Database, DatabaseOptions};
-#[cfg(windows)]
-use rand::RngCore;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Notify, Semaphore};
@@ -23,6 +21,9 @@ mod tests;
 
 #[cfg(unix)]
 mod ipc_unix;
+
+#[cfg(windows)]
+mod ipc_windows;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "LiliaDB local daemon")]
@@ -55,7 +56,16 @@ async fn main() -> anyhow::Result<()> {
     // invalidate the token of an already running daemon.
     #[cfg(unix)]
     let listener = ipc_unix::ListenerGuard::bind(&arguments.endpoint)?;
+    #[cfg(windows)]
+    let security = ipc_windows::UserSecurity::new()?;
+    #[cfg(windows)]
+    let listener = security.pipe(&arguments.endpoint, true)?;
+    #[cfg(unix)]
     let token = create_token(&arguments.token_file)?;
+    #[cfg(windows)]
+    let credentials = security.credentials(&arguments.token_file)?;
+    #[cfg(windows)]
+    let token = credentials.token.clone();
     let database = Arc::new(Database::open(DatabaseOptions::durable(
         &arguments.database,
     ))?);
@@ -64,7 +74,15 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     return serve(listener, database, token, shutdown).await;
     #[cfg(windows)]
-    serve(&arguments.endpoint, database, token, shutdown).await
+    serve(
+        &arguments.endpoint,
+        listener,
+        &security,
+        database,
+        token,
+        shutdown,
+    )
+    .await
 }
 
 fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::LoadedPlugin>> {
@@ -123,23 +141,6 @@ fn create_token(path: &Path) -> std::io::Result<String> {
     ipc_unix::create_token(path)
 }
 
-#[cfg(windows)]
-fn create_token(path: &Path) -> std::io::Result<String> {
-    let mut bytes = [0_u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, &token)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(token)
-}
-
 #[cfg(unix)]
 async fn serve(
     listener: ipc_unix::ListenerGuard,
@@ -175,26 +176,28 @@ async fn serve(
 #[cfg(windows)]
 async fn serve(
     endpoint: &Path,
+    mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+    security: &ipc_windows::UserSecurity,
     database: Arc<Database>,
     token: String,
     shutdown: Arc<Notify>,
 ) -> anyhow::Result<()> {
-    use tokio::net::windows::named_pipe::ServerOptions;
-
-    let pipe_name = endpoint.to_string_lossy().into_owned();
     let connections = Arc::new(Semaphore::new(64));
     loop {
-        let server = ServerOptions::new().create(&pipe_name)?;
         tokio::select! {
             connected = server.connect() => {
                 connected?;
+                // Keep an instance alive continuously, even when rejecting a
+                // connection under load. Never release the pipe namespace.
+                let next = security.pipe(endpoint, false)?;
+                let accepted = std::mem::replace(&mut server, next);
                 let database = Arc::clone(&database);
                 let token = token.clone();
                 let shutdown = Arc::clone(&shutdown);
                 let Ok(permit) = connections.clone().try_acquire_owned() else { continue };
                 tokio::spawn(async move {
                     let _permit = permit;
-                    handle_stream(server, database, &token, shutdown).await.ok();
+                    handle_stream(accepted, database, &token, shutdown).await.ok();
                 });
             }
             () = shutdown.notified() => break,

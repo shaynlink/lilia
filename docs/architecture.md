@@ -72,8 +72,26 @@ hardlinked files, public files and other entry types are rejected without modifi
 Normal shutdown retains the token for subsequent atomic replacement on restart.
 These checks isolate different unprivileged users, not root or hostile processes
 already running as the same user. They are not a general-purpose filesystem sandbox.
-Windows DACL and token-file ACL hardening remain outstanding; these Unix guarantees
-must not be inferred for Windows.
+
+## Windows IPC security
+
+The daemon creates local named pipes with an explicit protected DACL granting full
+access only to the current process user SID. The first instance claims the name
+before token rotation; replacement listeners are created while the connected
+instance remains alive. Remote pipe names and remote clients are rejected.
+
+Windows token paths must use a local drive, without traversal, alternate data streams
+or reparse points. The final parent must have a protected current-user-only DACL;
+missing directories receive that DACL at creation. Existing files with broader or
+inherited ACLs are refused, not silently repaired. Directory handles deny delete
+sharing and remain open for the daemon lifetime to prevent ancestor replacement.
+Tokens are staged with the private DACL before writing, synced, then renamed over
+an existing validated token. Hardlinks and nonregular entries are refused.
+
+Use a new private IPC subdirectory when migrating from earlier Windows builds.
+These guarantees exclude administrators with privilege overrides and hostile
+same-user processes. Native Windows runtime tests and second-account denial tests
+are separate from cross-compilation; neither should be inferred from a macOS test run.
 
 ## Backups
 

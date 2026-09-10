@@ -21,7 +21,7 @@ test("daemon KV and JSON conformance", { skip: !daemonBinary }, async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "lilia-daemon-")));
   const path = join(directory, "daemon.lilia");
   const endpoint = process.platform === "win32" ? `\\\\.\\pipe\\liliadb-test-${process.pid}` : `${path}.sock`;
-  const tokenFile = `${path}.token`;
+  const tokenFile = process.platform === "win32" ? join(directory, "ipc", "token") : `${path}.token`;
   let daemon: ChildProcess | undefined;
   try {
     daemon = spawn(daemonBinary!, ["--database", path, "--endpoint", endpoint, "--token-file", tokenFile], {

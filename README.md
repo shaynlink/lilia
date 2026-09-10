@@ -38,6 +38,13 @@ IPC paths are supplied. Use physical paths without symlinks (resolve macOS tempo
 directory aliases first). Existing socket paths are never removed automatically.
 See [IPC filesystem policy](docs/architecture.md#unix-ipc-filesystem-policy).
 
+On Windows, use a local pipe name and a new token subdirectory so the daemon can
+create its current-user-only DACL (existing broader ACLs are refused):
+
+```powershell
+cargo run -p lilia-daemon -- --database .\lilia-local\demo.lilia --endpoint '\\.\pipe\liliadb-demo' --token-file .\lilia-local\ipc\token
+```
+
 Run the MCP stdio server with explicitly allowed database aliases:
 
 ```sh
