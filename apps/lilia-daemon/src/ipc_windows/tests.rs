@@ -58,6 +58,34 @@ fn unsafe_token_inputs_are_rejected_without_modification() {
     }
 }
 
+#[test]
+fn rejects_mutable_ancestors_before_creating_private_children() {
+    let temporary = tempfile::tempdir().unwrap();
+    let security = UserSecurity::new().unwrap();
+    let sddl = wide(OsStr::new("D:P(A;;FA;;;WD)")).unwrap();
+    let mut descriptor = std::ptr::null_mut();
+    // SAFETY: valid SDDL and output; this deliberately insecure descriptor is only
+    // used to create the test-owned rejection fixture, never a real credential.
+    assert_ne!(
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &raw mut descriptor,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    let public = UserSecurity {
+        descriptor: LocalMemory(descriptor),
+    };
+    let parent = temporary.path().join("mutable");
+    private_parent(&public, &parent);
+    assert!(security.credentials(&parent.join("private/token")).is_err());
+    assert!(!parent.join("private").exists());
+}
+
 #[tokio::test]
 async fn pipe_has_private_dacl_and_namespace_stays_claimed() {
     use tokio::net::windows::named_pipe::ClientOptions;

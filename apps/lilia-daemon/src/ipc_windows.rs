@@ -18,14 +18,16 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{
     EqualSid, GetAce, GetSecurityDescriptorControl, GetSecurityDescriptorOwner,
-    GetTokenInformation, TokenUser, ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
+    GetTokenInformation, IsWellKnownSid, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
+    ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION, INHERIT_ONLY_ACE, OWNER_SECURITY_INFORMATION,
+    SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateDirectoryW, CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-    CREATE_NEW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, READ_CONTROL,
+    CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+    FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -195,6 +197,10 @@ impl UserSecurity {
     }
 
     fn validate_private(&self, file: &impl AsRawHandle) -> io::Result<()> {
+        self.validate_security(file, true)
+    }
+
+    fn validate_security(&self, file: &impl AsRawHandle, private: bool) -> io::Result<()> {
         // SAFETY: GetSecurityInfo returns an allocated, valid self-relative SD;
         // owner and ACL/ACE pointers point into it and are only read while it lives.
         unsafe {
@@ -226,29 +232,64 @@ impl UserSecurity {
             {
                 return Err(io::Error::last_os_error());
             }
+            let trusted = |sid| {
+                EqualSid(sid, expected) != 0
+                    || IsWellKnownSid(sid, WinLocalSystemSid) != 0
+                    || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0
+            };
             if owner.is_null()
                 || acl.is_null()
-                || EqualSid(owner, expected) == 0
-                || control & SE_DACL_PROTECTED == 0
-                || (*acl).AceCount != 1
+                || !trusted(owner)
+                || (private
+                    && (EqualSid(owner, expected) == 0
+                        || control & SE_DACL_PROTECTED == 0
+                        || (*acl).AceCount != 1))
             {
                 return Err(denied(
                     "token directory/file must have a protected current-user-only DACL",
                 ));
             }
-            let mut ace = std::ptr::null_mut();
-            if GetAce(acl, 0, &raw mut ace) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
-            if ace.Header.AceType != 0
-                || ace.Header.AceFlags != 0
-                || ![FILE_ALL_ACCESS, GENERIC_ALL].contains(&ace.Mask)
-                || EqualSid((&raw const ace.SidStart).cast_mut().cast(), expected) == 0
-            {
-                return Err(denied(
-                    "token directory/file grants access beyond the current user",
-                ));
+            for index in 0..u32::from((*acl).AceCount) {
+                let mut ace = std::ptr::null_mut();
+                if GetAce(acl, index, &raw mut ace) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+                // Deny entries cannot expand access. Unknown/object/callback ACEs
+                // are refused rather than attempting to reinterpret their layout.
+                if !private && ace.Header.AceType == 1 {
+                    continue;
+                }
+                if ace.Header.AceType != 0 {
+                    return Err(denied("unsupported token path ACL entry"));
+                }
+                let sid = (&raw const ace.SidStart).cast_mut().cast();
+                if private {
+                    if ace.Header.AceFlags != 0
+                        || ![FILE_ALL_ACCESS, GENERIC_ALL].contains(&ace.Mask)
+                        || EqualSid(sid, expected) == 0
+                    {
+                        return Err(denied(
+                            "token directory/file grants access beyond the current user",
+                        ));
+                    }
+                } else {
+                    let mutation = GENERIC_ALL
+                        | GENERIC_WRITE
+                        | WRITE_DAC
+                        | WRITE_OWNER
+                        | DELETE
+                        | FILE_DELETE_CHILD
+                        | FILE_WRITE_ATTRIBUTES
+                        | FILE_WRITE_EA
+                        | FILE_WRITE_DATA;
+                    if u32::from(ace.Header.AceFlags) & INHERIT_ONLY_ACE == 0
+                        && ace.Mask & mutation != 0
+                        && !trusted(sid)
+                    {
+                        return Err(denied("token ancestor permits mutation by another user"));
+                    }
+                }
             }
             Ok(())
         }
@@ -289,6 +330,10 @@ impl UserSecurity {
             }
             if current == parent {
                 self.validate_private(&file)?;
+            } else {
+                // Delete sharing alone does not stop in-place junction conversion.
+                // Refuse untrusted write-data/write-attributes and ACL mutation rights.
+                self.validate_security(&file, false)?;
             }
             parents.push(file);
         }
