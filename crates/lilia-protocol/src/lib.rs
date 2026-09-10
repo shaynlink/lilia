@@ -12,6 +12,8 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub struct Request {
     pub id: String,
     pub token: String,
+    /// Optional relative admission budget, starting after the full frame is decoded.
+    /// Includes waiting for a daemon blocking worker, but does not cancel running storage work.
     pub deadline_ms: Option<u64>,
     pub operation: Operation,
 }

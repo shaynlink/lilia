@@ -31,6 +31,19 @@ The daemon handshake has protocol major/minor `1.0`, a 16 MiB frame limit, per-r
 random local token stored with user-only permissions, bounded connections, and idle/deadline
 timeouts. No TCP listener exists in version `0.1`.
 
+Daemon requests are authenticated before dispatch, including shutdown. A rejected
+shutdown never signals daemon termination. Equal-length tokens are compared in
+constant time. Blocking storage operations run outside the async executor.
+
+`deadline_ms` is an optional relative admission budget starting after frame decode.
+Zero rejects immediately; the budget is checked again when a blocking worker becomes
+available. An expired queued request returns retryable `TIMEOUT` without dispatching
+the operation. This is not an execution or response-time limit: it does not interrupt
+SQLite work or its internal lock waits after dispatch, and a queued response may wait
+for a worker. Once work starts, the daemon returns its actual outcome rather than
+claiming that a potentially committed write timed out. Omitting the field imposes no
+admission deadline. The existing frame-read idle timeout remains separate.
+
 ## Roadmap boundaries
 
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
