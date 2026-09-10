@@ -12,11 +12,26 @@ A package directory contains:
 - one platform library whose SHA-256 digest is recorded by the manifest.
 
 The manifest identifies name, semantic version, ABI `1.0`, engine requirement, target, library,
-digest, and capabilities. Target identifiers use `<architecture>-<operating-system>` in `0.1`.
+digest, and capabilities. It must be the exact compact serialization produced by
+`PluginManifest::canonical_bytes`; whitespace or field-order variants are rejected before signature
+verification. The engine requirement is a SemVer range which must include the running engine.
 
-The installer rejects absolute paths, traversal, symlink escapes, oversized files, mismatched
-digests, unknown signing keys, incompatible targets, and incompatible ABI versions. Installation
-uses a staging directory followed by an atomic rename. Loading occurs only at process startup.
+Target identifiers are exact Rust target triples. Alpha 1 accepts only:
+
+- `aarch64-apple-darwin`;
+- `x86_64-apple-darwin`;
+- `aarch64-unknown-linux-gnu`;
+- `x86_64-unknown-linux-gnu`;
+- `x86_64-pc-windows-msvc`.
+
+The installer rejects absolute and nested paths, traversal, symlinks, unexpected or oversized files,
+mismatched digests, unknown signing keys, incompatible targets, duplicate capabilities, and
+incompatible ABI versions. The plugin root must be a real private directory (`0700` on Unix).
+Installation copies into a random private staging directory, re-verifies the staged bytes, serializes
+competing installers with an exclusive destination reservation, and publishes without overwriting an
+existing version. Installed packages live at `<root>/<name>-<version>-<target>/package`. Loading
+occurs only at process startup, and the exported descriptor must declare exactly the capabilities
+present in the signed manifest.
 
 ## ABI
 
@@ -25,5 +40,6 @@ panic, owned Rust value, or allocator boundary may cross the interface. Capabili
 currently identify KV and JSON.
 
 Official packages will use an embedded release trust key. Operators can pass additional verifying
-keys explicitly. `--allow-unsigned` is a development-only escape hatch and must not be enabled in a
-production launcher.
+keys explicitly. Unsigned packages fail closed by default. The CLI requires both
+`--allow-unsigned --development`; the daemon equivalently requires
+`--allow-unsigned-plugins --development`. Production launchers must never enable these pairs.

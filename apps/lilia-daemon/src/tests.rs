@@ -2,6 +2,22 @@ use super::*;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+#[test]
+fn unsigned_plugins_require_explicit_development_mode() {
+    let arguments = Arguments {
+        database: PathBuf::from("database.lilia"),
+        endpoint: PathBuf::from("endpoint"),
+        token_file: PathBuf::from("token"),
+        plugins: Vec::new(),
+        trusted_keys: Vec::new(),
+        plugin_root: None,
+        allow_unsigned_plugins: true,
+        development: false,
+    };
+    let error = load_plugins(&arguments).expect_err("unsigned mode must fail closed");
+    assert!(error.to_string().contains("--development"));
+}
+
 #[cfg(unix)]
 #[test]
 fn token_symlink_is_rejected_without_touching_target() {

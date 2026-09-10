@@ -42,6 +42,9 @@ struct Arguments {
     plugin_root: Option<PathBuf>,
     #[arg(long)]
     allow_unsigned_plugins: bool,
+    /// Explicitly enable development-only plugin policy exceptions.
+    #[arg(long)]
+    development: bool,
 }
 
 #[tokio::main]
@@ -87,6 +90,10 @@ async fn main() -> anyhow::Result<()> {
 
 fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::LoadedPlugin>> {
     use base64::Engine;
+
+    if arguments.allow_unsigned_plugins && !arguments.development {
+        anyhow::bail!("--allow-unsigned-plugins requires explicit --development mode");
+    }
 
     let mut encoded_keys = arguments.trusted_keys.clone();
     if let Some(root) = &arguments.plugin_root {
