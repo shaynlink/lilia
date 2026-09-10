@@ -145,6 +145,9 @@ pub(crate) enum PluginCommand {
         trusted_keys: Vec<String>,
         #[arg(long)]
         allow_unsigned: bool,
+        /// Explicitly enable development-only plugin policy exceptions.
+        #[arg(long)]
+        development: bool,
     },
     Install {
         package: PathBuf,
@@ -153,6 +156,9 @@ pub(crate) enum PluginCommand {
         trusted_keys: Vec<String>,
         #[arg(long)]
         allow_unsigned: bool,
+        /// Explicitly enable development-only plugin policy exceptions.
+        #[arg(long)]
+        development: bool,
     },
     List {
         root: PathBuf,

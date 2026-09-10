@@ -1,31 +1,10 @@
 use std::ffi::CStr;
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
-use base64::Engine;
-use ed25519_dalek::{Signature, VerifyingKey};
 use libloading::{Library, Symbol};
-use sha2::{Digest, Sha256};
-use thiserror::Error;
 
-use crate::{PluginDescriptorV1, PluginManifest, ABI_MAJOR, ABI_MINOR};
-
-const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
-const MAX_LIBRARY_BYTES: u64 = 256 * 1024 * 1024;
-
-#[derive(Debug, Error)]
-pub enum PluginApiError {
-    #[error("invalid plugin package: {0}")]
-    Invalid(String),
-    #[error("plugin I/O failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("plugin JSON failed: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("plugin signature is invalid")]
-    Signature,
-    #[error("plugin loading failed: {0}")]
-    Loading(#[from] libloading::Error),
-}
+use crate::package::safe_regular_file;
+use crate::{PluginApiError, PluginDescriptorV1, PluginManifest, ABI_MAJOR, ABI_MINOR};
 
 pub struct LoadedPlugin {
     pub descriptor: PluginDescriptorV1,
@@ -43,74 +22,6 @@ impl std::fmt::Debug for LoadedPlugin {
     }
 }
 
-pub fn verify_package(
-    package_dir: &Path,
-    trusted_keys: &[VerifyingKey],
-    allow_unsigned: bool,
-) -> Result<PluginManifest, PluginApiError> {
-    let canonical_dir = package_dir.canonicalize()?;
-    let manifest_path = canonical_dir.join("manifest.json");
-    check_file_size(&manifest_path, MAX_MANIFEST_BYTES)?;
-    let manifest: PluginManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
-    validate_manifest(&manifest)?;
-    let library_path = safe_child(&canonical_dir, &manifest.library)?;
-    check_file_size(&library_path, MAX_LIBRARY_BYTES)?;
-    let digest = hex::encode(Sha256::digest(fs::read(&library_path)?));
-    if !digest.eq_ignore_ascii_case(&manifest.library_sha256) {
-        return Err(PluginApiError::Invalid("library checksum mismatch".into()));
-    }
-    let signature_path = canonical_dir.join("manifest.sig");
-    if signature_path.exists() {
-        let signature_text = fs::read_to_string(signature_path)?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(signature_text.trim())
-            .map_err(|_| PluginApiError::Signature)?;
-        let signature = Signature::from_slice(&bytes).map_err(|_| PluginApiError::Signature)?;
-        let payload = manifest.canonical_bytes()?;
-        if !trusted_keys
-            .iter()
-            .any(|key| key.verify_strict(&payload, &signature).is_ok())
-        {
-            return Err(PluginApiError::Signature);
-        }
-    } else if !allow_unsigned {
-        return Err(PluginApiError::Signature);
-    }
-    Ok(manifest)
-}
-
-pub fn install_verified(
-    package_dir: &Path,
-    install_root: &Path,
-    trusted_keys: &[VerifyingKey],
-    allow_unsigned: bool,
-) -> Result<PathBuf, PluginApiError> {
-    let manifest = verify_package(package_dir, trusted_keys, allow_unsigned)?;
-    fs::create_dir_all(install_root)?;
-    let destination = install_root.join(format!(
-        "{}-{}-{}",
-        manifest.name, manifest.version, manifest.target
-    ));
-    if destination.exists() {
-        return Err(PluginApiError::Invalid(
-            "plugin version is already installed".into(),
-        ));
-    }
-    let staging = install_root.join(format!(".installing-{}", manifest.name));
-    if staging.exists() {
-        fs::remove_dir_all(&staging)?;
-    }
-    fs::create_dir(&staging)?;
-    for filename in ["manifest.json", "manifest.sig", manifest.library.as_str()] {
-        let source = safe_child(package_dir, filename)?;
-        if source.exists() {
-            fs::copy(source, staging.join(filename))?;
-        }
-    }
-    fs::rename(&staging, &destination)?;
-    Ok(destination)
-}
-
 /// Load a package only after `verify_package` has accepted it.
 ///
 /// # Safety
@@ -120,11 +31,23 @@ pub unsafe fn load_descriptor(
     package_dir: &Path,
     manifest: &PluginManifest,
 ) -> Result<LoadedPlugin, PluginApiError> {
-    let library_path = safe_child(package_dir, &manifest.library)?;
+    let library_path = safe_regular_file(package_dir, &manifest.library, 256 * 1024 * 1024)?;
     let library = unsafe { Library::new(library_path)? };
     let entry: Symbol<'_, unsafe extern "C" fn() -> PluginDescriptorV1> =
         unsafe { library.get(b"lilia_plugin_v1\0")? };
     let descriptor = unsafe { entry() };
+    let name = validate_descriptor(&descriptor, manifest)?;
+    Ok(LoadedPlugin {
+        descriptor,
+        name,
+        _library: library,
+    })
+}
+
+fn validate_descriptor(
+    descriptor: &PluginDescriptorV1,
+    manifest: &PluginManifest,
+) -> Result<String, PluginApiError> {
     if descriptor.abi_major != ABI_MAJOR
         || descriptor.abi_minor > ABI_MINOR
         || descriptor.name.is_null()
@@ -134,73 +57,63 @@ pub unsafe fn load_descriptor(
         ));
     }
     let name = unsafe { CStr::from_ptr(descriptor.name) }
-        .to_string_lossy()
-        .into_owned();
+        .to_str()
+        .map_err(|_| PluginApiError::Invalid("plugin descriptor name is not UTF-8".into()))?
+        .to_owned();
     if name != manifest.name {
         return Err(PluginApiError::Invalid(
             "descriptor name does not match manifest".into(),
         ));
     }
-    Ok(LoadedPlugin {
-        descriptor,
-        name,
-        _library: library,
-    })
+    let expected = manifest
+        .capabilities
+        .iter()
+        .fold(0, |bits, capability| bits | capability.bit());
+    if descriptor.capabilities != expected {
+        return Err(PluginApiError::Invalid(
+            "descriptor capabilities do not match manifest".into(),
+        ));
+    }
+    Ok(name)
 }
 
-fn validate_manifest(manifest: &PluginManifest) -> Result<(), PluginApiError> {
-    if manifest.name.is_empty()
-        || !manifest
-            .name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return Err(PluginApiError::Invalid(
-            "plugin name must be alphanumeric with dashes".into(),
-        ));
-    }
-    if manifest.abi_major != ABI_MAJOR || manifest.abi_minor > ABI_MINOR {
-        return Err(PluginApiError::Invalid("unsupported plugin ABI".into()));
-    }
-    if manifest.target != std::env::consts::ARCH.to_owned() + "-" + std::env::consts::OS {
-        return Err(PluginApiError::Invalid(
-            "plugin target does not match this host".into(),
-        ));
-    }
-    Ok(())
-}
+#[cfg(test)]
+mod tests {
+    use std::ffi::c_char;
 
-fn safe_child(root: &Path, relative: &str) -> Result<PathBuf, PluginApiError> {
-    let path = Path::new(relative);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return Err(PluginApiError::Invalid(
-            "plugin path must be a plain relative filename".into(),
-        ));
-    }
-    let child = root.join(path);
-    if child.exists() {
-        let canonical_root = root.canonicalize()?;
-        let canonical_child = child.canonicalize()?;
-        if !canonical_child.starts_with(canonical_root) {
-            return Err(PluginApiError::Invalid(
-                "plugin path escapes package directory".into(),
-            ));
+    use super::*;
+    use crate::{host_target, Capability};
+
+    static NAME: &[u8] = b"trusted-plugin\0";
+
+    fn manifest() -> PluginManifest {
+        PluginManifest {
+            name: "trusted-plugin".into(),
+            version: "1.0.0".into(),
+            abi_major: ABI_MAJOR,
+            abi_minor: ABI_MINOR,
+            engine_requirement: ">=0.1.0-alpha.1,<0.2.0".into(),
+            target: host_target().into(),
+            library: "plugin.so".into(),
+            library_sha256: "0".repeat(64),
+            capabilities: vec![Capability::Kv],
         }
-        return Ok(canonical_child);
     }
-    Ok(child)
-}
 
-fn check_file_size(path: &Path, maximum: u64) -> Result<(), PluginApiError> {
-    let size = fs::metadata(path)?.len();
-    if size > maximum {
-        return Err(PluginApiError::Invalid(
-            "plugin file exceeds size limit".into(),
-        ));
+    #[test]
+    fn rejects_descriptor_capabilities_not_declared_by_manifest() {
+        let descriptor = PluginDescriptorV1::new(NAME.as_ptr().cast::<c_char>(), 1 << 1);
+        let error =
+            validate_descriptor(&descriptor, &manifest()).expect_err("must reject mismatch");
+        assert!(error.to_string().contains("capabilities"));
     }
-    Ok(())
+
+    #[test]
+    fn accepts_descriptor_that_exactly_matches_manifest() {
+        let descriptor = PluginDescriptorV1::new(NAME.as_ptr().cast::<c_char>(), 1);
+        assert_eq!(
+            validate_descriptor(&descriptor, &manifest()).expect("valid descriptor"),
+            "trusted-plugin"
+        );
+    }
 }
