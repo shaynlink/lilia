@@ -33,9 +33,9 @@ fn concurrent_backups_publish_exactly_once_and_clean_staging() {
         };
         let first = scope.spawn(run);
         let second = scope.spawn(run);
-        let successes = usize::from(first.join().unwrap().is_ok())
-            + usize::from(second.join().unwrap().is_ok());
-        assert_eq!(successes, 1);
+        let results = [first.join().unwrap(), second.join().unwrap()];
+        let successes = results.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(successes, 1, "backup results: {results:?}");
     });
     assert!(Database::open(DatabaseOptions::durable(destination))
         .unwrap()

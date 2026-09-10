@@ -151,7 +151,10 @@ impl Database {
                 false,
             ));
         }
-        std::fs::File::open(&temporary)
+        // Windows FlushFileBuffers requires a handle opened with write access.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&temporary)
             .map_err(backup_io)?
             .sync_all()
             .map_err(backup_io)?;
