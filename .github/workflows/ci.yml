@@ -28,6 +28,16 @@ jobs:
         shell: pwsh
         run: ./tools/test-windows-accounts.ps1
       - run: cargo build --workspace --release
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Five-surface native conformance
+        run: pnpm nx run lilia-conformance:test
 
   node:
     strategy:
@@ -47,3 +57,6 @@ jobs:
       - run: pnpm nx show projects
       - run: pnpm --filter @liliadb/node lint
       - run: pnpm --filter @liliadb/node build
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - name: Five-surface Node version conformance
+        run: pnpm nx run lilia-conformance:test

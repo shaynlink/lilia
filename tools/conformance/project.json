@@ -1,0 +1,11 @@
+{
+  "name": "lilia-conformance",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "implicitDependencies": ["lilia-storage-sqlite", "lilia-node-native", "liliadb-node", "lilia-daemon", "lilia-cli", "lilia-mcp"],
+  "targets": {
+    "build": { "executor": "nx:run-commands", "cache": false, "dependsOn": [], "options": { "command": "node tools/conformance/build.mjs" } },
+    "test": { "executor": "nx:run-commands", "cache": false, "dependsOn": ["build"], "options": { "command": "node tools/conformance/run.mjs" } }
+  },
+  "tags": ["scope:conformance", "type:application"]
+}

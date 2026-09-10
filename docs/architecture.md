@@ -198,5 +198,12 @@ repaired.
 
 ## Roadmap boundaries
 
+The [shared conformance suite](../tools/conformance/README.md) runs one ordered
+fixture corpus through Rust embedded, Node embedded, daemon, CLI JSON and MCP.
+CLI execution errors now preserve the structured Lilia error on stderr with exit
+code 1 and no result on stdout; JSON parse failures use `INVALID_INPUT`. Clap's
+command-line usage errors remain separate (exit code 2). Node native errors are
+decoded into `LiliaError`, and binary daemon error UUIDs become string request IDs.
+
 SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
 Their future plugins must use the same transaction boundary and protect `_lilia_*` tables.

@@ -11,7 +11,20 @@ use args::{Arguments, Command, Output};
 
 fn main() {
     if let Err(error) = run() {
-        let payload = serde_json::to_string(&json!({"ok": false, "error": error.to_string()}))
+        let structured = error
+            .downcast_ref::<lilia_core::LiliaError>()
+            .cloned()
+            .unwrap_or_else(|| {
+                let code = if error.downcast_ref::<serde_json::Error>().is_some() {
+                    lilia_core::ErrorCode::InvalidInput
+                } else if error.downcast_ref::<std::io::Error>().is_some() {
+                    lilia_core::ErrorCode::Io
+                } else {
+                    lilia_core::ErrorCode::Storage
+                };
+                lilia_core::LiliaError::new(code, "command failed", false)
+            });
+        let payload = serde_json::to_string(&json!({"ok": false, "error": structured}))
             .unwrap_or_else(|_| "{\"ok\":false}".into());
         eprintln!("{payload}");
         std::process::exit(1);

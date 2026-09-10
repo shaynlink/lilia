@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { decode, encode } from "@msgpack/msgpack";
 import { LiliaError, type BatchOperation, type JsonEntry, type KvEntry, type MutationResult } from "./types.js";
 
-interface WireResponse { id: string; result: { Ok?: unknown; Err?: { message: string; code: string; retryable: boolean; request_id: string } } }
+interface WireResponse { id: string; result: { Ok?: unknown; Err?: { message: string; code: string; retryable: boolean; request_id: string | Uint8Array } } }
 
 export class DaemonClient {
   private constructor(private readonly endpoint: string, private readonly token: string) {}
@@ -28,8 +28,8 @@ export class DaemonClient {
     return ((await this.call({ type: "json_scan", space, after, limit })) as unknown[]).map(value => mapJson(value) as JsonEntry);
   }
   async batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> {
-    const result = await this.call({ type: "batch", operations: operations.map(toWire) }) as Array<{ version?: number; deleted: boolean }>;
-    return result.map(item => ({ ...item, version: item.version === undefined ? undefined : BigInt(item.version) }));
+    const result = await this.call({ type: "batch", operations: operations.map(toWire) }) as Array<{ version?: number | null; deleted: boolean }>;
+    return result.map(item => ({ ...item, version: item.version == null ? undefined : BigInt(item.version) }));
   }
   async integrityCheck(): Promise<boolean> { return Boolean(await this.call({ type: "integrity_check" })); }
   async backup(destination: string): Promise<void> { await this.call({ type: "backup", destination }); }
@@ -43,9 +43,19 @@ export class DaemonClient {
     header.writeUInt32BE(payload.byteLength);
     socket.end(Buffer.concat([header, Buffer.from(payload)]));
     const response = await receive(socket);
-    if (response.result.Err) throw new LiliaError(response.result.Err);
+    if (response.result.Err) {
+      const error = response.result.Err;
+      throw new LiliaError({ ...error, request_id: uuidString(error.request_id) });
+    }
     return unwrapValue(response.result.Ok);
   }
+}
+
+function uuidString(value: string | Uint8Array): string {
+  if (typeof value === "string") return value;
+  if (!(value instanceof Uint8Array) || value.length !== 16) throw new Error("invalid daemon error request ID");
+  const hex = Buffer.from(value).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function receive(socket: Socket): Promise<WireResponse> {
