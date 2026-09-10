@@ -1,0 +1,1 @@
+{"name":"@liliadb/node-darwin-x64","sourceRoot":"packages/node-darwin-x64","targets":{"package":{"executor":"nx:run-commands","options":{"command":"pnpm pack"}}}}

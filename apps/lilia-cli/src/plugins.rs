@@ -4,8 +4,9 @@ use base64::Engine;
 use ed25519_dalek::VerifyingKey;
 use lilia_plugin_api::{install_verified, verify_package};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
-use crate::args::PluginCommand;
+use crate::args::{PluginCommand, TrustCommand};
 
 pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
     match command {
@@ -18,6 +19,7 @@ pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
             &decode_keys(&trusted_keys)?,
             allow_unsigned,
         )?)?),
+        PluginCommand::Trust { command } => trust(command),
         PluginCommand::Install {
             package,
             root,
@@ -56,6 +58,57 @@ pub(crate) fn execute(command: PluginCommand) -> anyhow::Result<Value> {
             let path = root.join(installed_name);
             fs::remove_dir_all(&path)?;
             Ok(json!({"removed": path}))
+        }
+    }
+}
+
+fn trust(command: TrustCommand) -> anyhow::Result<Value> {
+    match command {
+        TrustCommand::Add { root, key } => {
+            let decoded = decode_keys(std::slice::from_ref(&key))?;
+            let fingerprint = hex::encode(Sha256::digest(decoded[0].as_bytes()));
+            fs::create_dir_all(&root)?;
+            let path = root.join("trust-keys.json");
+            let mut keys: Vec<String> = if path.exists() {
+                serde_json::from_slice(&fs::read(&path)?)?
+            } else {
+                Vec::new()
+            };
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+            fs::write(&path, serde_json::to_vec_pretty(&keys)?)?;
+            Ok(json!({"added": fingerprint}))
+        }
+        TrustCommand::List { root } => {
+            let path = root.join("trust-keys.json");
+            let keys: Vec<String> = if path.exists() {
+                serde_json::from_slice(&fs::read(path)?)?
+            } else {
+                Vec::new()
+            };
+            Ok(json!(keys
+                .into_iter()
+                .map(|key| {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(&key)
+                        .unwrap_or_default();
+                    json!({"fingerprint": hex::encode(Sha256::digest(bytes)), "key": key})
+                })
+                .collect::<Vec<_>>()))
+        }
+        TrustCommand::Remove { root, fingerprint } => {
+            let path = root.join("trust-keys.json");
+            let mut keys: Vec<String> = serde_json::from_slice(&fs::read(&path)?)?;
+            keys.retain(|key| {
+                hex::encode(Sha256::digest(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(key)
+                        .unwrap_or_default(),
+                )) != fingerprint
+            });
+            fs::write(&path, serde_json::to_vec_pretty(&keys)?)?;
+            Ok(json!({"removed": fingerprint}))
         }
     }
 }

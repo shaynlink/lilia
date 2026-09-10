@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2021"
 rust-version = "1.91.1"
 license = "Apache-2.0"
@@ -22,6 +22,7 @@ repository = "https://github.com/shaynlink/lilia"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
+criterion = "0.7.0"
 base64 = "0.22.1"
 clap = { version = "4.5.51", features = ["derive"] }
 ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }

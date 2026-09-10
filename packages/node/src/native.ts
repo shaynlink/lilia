@@ -9,17 +9,18 @@ interface NativeDatabaseHandle {
   jsonScan(space: string, after: string | undefined, limit: number): Promise<string>;
   batch(operations: string): Promise<string>;
   integrityCheck(): Promise<boolean>;
+  backup(destination: string): Promise<void>;
 }
-interface NativeModule { NativeDatabase: { open(path: string): Promise<NativeDatabaseHandle> } }
+interface NativeModule { NativeDatabase: { open(options: Record<string, unknown>): Promise<NativeDatabaseHandle> } }
 
 const require = createRequire(import.meta.url);
 
 export class EmbeddedClient {
   private constructor(private readonly native: NativeDatabaseHandle) {}
 
-  static async open(path: string): Promise<EmbeddedClient> {
+  static async open(options: Record<string, unknown>): Promise<EmbeddedClient> {
     const module = loadNative();
-    return new EmbeddedClient(await module.NativeDatabase.open(path));
+    return new EmbeddedClient(await module.NativeDatabase.open(options));
   }
 
   async kvGet(namespace: string, key: Uint8Array): Promise<KvEntry | undefined> {
@@ -47,15 +48,23 @@ export class EmbeddedClient {
   }
 
   integrityCheck(): Promise<boolean> { return this.native.integrityCheck(); }
+  backup(destination: string): Promise<void> { return this.native.backup(destination); }
   close(): Promise<void> { return Promise.resolve(); }
 }
 
 function loadNative(): NativeModule {
   const explicit = process.env.LILIA_NATIVE_PATH;
   if (explicit) return require(explicit) as NativeModule;
-  const platform = `${process.platform}-${process.arch}`;
+  const platform = nativePackagePlatform();
   try { return require(`@liliadb/node-${platform}`) as NativeModule; }
   catch (error) { throw new Error(`No LiliaDB native build for ${platform}; set LILIA_NATIVE_PATH`, { cause: error }); }
+}
+
+function nativePackagePlatform(): string {
+  if (process.platform === "darwin") return `darwin-${process.arch}`;
+  if (process.platform === "linux") return `linux-${process.arch}-gnu`;
+  if (process.platform === "win32") return "win32-x64-msvc";
+  return `${process.platform}-${process.arch}`;
 }
 
 function mapKv(entry: NativeKvEntry): KvEntry {

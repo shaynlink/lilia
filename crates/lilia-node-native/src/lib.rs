@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use lilia_core::BatchOperation;
+use lilia_core::{BatchOperation, Durability};
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use napi::bindgen_prelude::{Buffer, Error, Result, Status};
 use napi_derive::napi;
@@ -11,6 +11,16 @@ use napi_derive::napi;
 #[derive(Debug)]
 pub struct NativeDatabase {
     inner: Arc<Database>,
+}
+
+#[napi(object)]
+#[derive(Debug)]
+pub struct NativeOpenOptions {
+    pub path: String,
+    pub durability: Option<String>,
+    pub busy_timeout_ms: Option<u32>,
+    pub writer_queue_capacity: Option<u32>,
+    pub read_pool_size: Option<u32>,
 }
 
 #[napi(object)]
@@ -38,9 +48,24 @@ impl std::fmt::Debug for NativeKvEntry {
 #[napi]
 impl NativeDatabase {
     #[napi(factory)]
-    pub async fn open(path: String) -> Result<Self> {
+    pub async fn open(options: NativeOpenOptions) -> Result<Self> {
         let database = tokio::task::spawn_blocking(move || {
-            Database::open(DatabaseOptions::durable(path)).map_err(napi_error)
+            let mut settings = DatabaseOptions::durable(options.path);
+            settings.durability = match options.durability.as_deref() {
+                Some("balanced") => Durability::Balanced,
+                Some("performance") => Durability::Performance,
+                _ => Durability::Durable,
+            };
+            if let Some(value) = options.busy_timeout_ms {
+                settings.busy_timeout_ms = u64::from(value);
+            }
+            if let Some(value) = options.writer_queue_capacity {
+                settings.writer_queue_capacity = value as usize;
+            }
+            if let Some(value) = options.read_pool_size {
+                settings.read_pool_size = value as usize;
+            }
+            Database::open(settings).map_err(napi_error)
         })
         .await
         .map_err(join_error)??;
@@ -161,6 +186,14 @@ impl NativeDatabase {
     pub async fn integrity_check(&self) -> Result<bool> {
         let database = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || database.integrity_check().map_err(napi_error))
+            .await
+            .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn backup(&self, destination: String) -> Result<()> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || database.backup(destination).map_err(napi_error))
             .await
             .map_err(join_error)?
     }

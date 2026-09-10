@@ -17,12 +17,18 @@ pub struct LiliaError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
+    Busy,
     Conflict,
+    Corrupt,
+    DiskFull,
     InvalidInput,
     Io,
     NotFound,
     Storage,
+    Timeout,
     Unauthorized,
+    PluginIncompatible,
+    PluginMigrationFailed,
     Unsupported,
 }
 
@@ -38,6 +44,12 @@ impl LiliaError {
     }
 
     #[must_use]
+    pub fn with_request_id(mut self, request_id: Uuid) -> Self {
+        self.request_id = request_id;
+        self
+    }
+
+    #[must_use]
     pub fn details(mut self, details: Value) -> Self {
         self.details = Some(details);
         self
@@ -47,15 +59,20 @@ impl LiliaError {
 #[cfg(feature = "sqlite-errors")]
 impl From<rusqlite::Error> for LiliaError {
     fn from(error: rusqlite::Error) -> Self {
-        let retryable = matches!(
-            error,
-            rusqlite::Error::SqliteFailure(ref inner, _)
-                if matches!(
-                    inner.code,
-                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
-                )
-        );
-        Self::new(ErrorCode::Storage, error.to_string(), retryable)
+        let code = match error {
+            rusqlite::Error::SqliteFailure(ref inner, _) => match inner.code {
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
+                    ErrorCode::Busy
+                }
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase => {
+                    ErrorCode::Corrupt
+                }
+                rusqlite::ErrorCode::DiskFull => ErrorCode::DiskFull,
+                _ => ErrorCode::Storage,
+            },
+            _ => ErrorCode::Storage,
+        };
+        Self::new(code, error.to_string(), code == ErrorCode::Busy)
     }
 }
 

@@ -32,6 +32,7 @@ export class DaemonClient {
     return result.map(item => ({ ...item, version: item.version === undefined ? undefined : BigInt(item.version) }));
   }
   async integrityCheck(): Promise<boolean> { return Boolean(await this.call({ type: "integrity_check" })); }
+  async backup(destination: string): Promise<void> { await this.call({ type: "backup", destination }); }
   close(): Promise<void> { return Promise.resolve(); }
 
   private async call(operation: Record<string, unknown>): Promise<unknown> {

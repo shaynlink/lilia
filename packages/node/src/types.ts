@@ -9,6 +9,10 @@ export interface OpenOptions {
   plugins?: readonly ("kv" | "json")[];
   endpoint?: string;
   tokenFile?: string;
+  busyTimeoutMs?: number;
+  writerQueueCapacity?: number;
+  readPoolSize?: number;
+  checkpointPolicy?: { walBytes?: number; intervalMs?: number };
 }
 
 export interface KvEntry {

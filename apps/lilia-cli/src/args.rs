@@ -23,7 +23,10 @@ pub(crate) enum Output {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     Init,
-    Doctor,
+    Doctor {
+        #[arg(long)]
+        deep: bool,
+    },
     Backup {
         destination: PathBuf,
     },
@@ -132,6 +135,10 @@ pub(crate) enum JsonCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PluginCommand {
+    Trust {
+        #[command(subcommand)]
+        command: TrustCommand,
+    },
     Verify {
         package: PathBuf,
         #[arg(long = "trusted-key")]
@@ -154,4 +161,11 @@ pub(crate) enum PluginCommand {
         root: PathBuf,
         installed_name: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TrustCommand {
+    Add { root: PathBuf, key: String },
+    List { root: PathBuf },
+    Remove { root: PathBuf, fingerprint: String },
 }

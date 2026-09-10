@@ -11,11 +11,13 @@ pub(crate) fn execute(command: Command, path: &Path) -> anyhow::Result<Value> {
     let database = Database::open(DatabaseOptions::durable(path))?;
     Ok(match command {
         Command::Init => json!({"ok": true, "path": database.path()}),
-        Command::Doctor => json!({
+        Command::Doctor { deep } => json!({
             "ok": database.integrity_check()?,
             "path": database.path(),
             "journal": "wal",
-            "synchronous": "full"
+            "synchronous": "full",
+            "deep": deep,
+            "checkpoint": if deep { database.checkpoint().is_ok() } else { true }
         }),
         Command::Backup { destination } => {
             database.backup(&destination)?;

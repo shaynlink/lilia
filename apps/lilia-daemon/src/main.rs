@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use lilia_core::{ErrorCode, LiliaError};
@@ -12,8 +12,9 @@ use lilia_protocol::{
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
 use tracing::info;
+use uuid::Uuid;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "LiliaDB local daemon")]
@@ -28,6 +29,8 @@ struct Arguments {
     plugins: Vec<PathBuf>,
     #[arg(long = "trusted-key")]
     trusted_keys: Vec<String>,
+    #[arg(long)]
+    plugin_root: Option<PathBuf>,
     #[arg(long)]
     allow_unsigned_plugins: bool,
 }
@@ -52,8 +55,14 @@ async fn main() -> anyhow::Result<()> {
 fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::LoadedPlugin>> {
     use base64::Engine;
 
-    let trusted_keys = arguments
-        .trusted_keys
+    let mut encoded_keys = arguments.trusted_keys.clone();
+    if let Some(root) = &arguments.plugin_root {
+        let path = root.join("trust-keys.json");
+        if path.exists() {
+            encoded_keys.extend(serde_json::from_slice::<Vec<String>>(&fs::read(path)?)?);
+        }
+    }
+    let trusted_keys = encoded_keys
         .iter()
         .map(|encoded| {
             let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
@@ -67,6 +76,13 @@ fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::L
         .plugins
         .iter()
         .map(|path| {
+            if let Some(root) = &arguments.plugin_root {
+                let canonical_root = root.canonicalize()?;
+                let canonical_plugin = path.canonicalize()?;
+                if !canonical_plugin.starts_with(canonical_root) {
+                    anyhow::bail!("plugin path is outside the authorized plugin root");
+                }
+            }
             let manifest = lilia_plugin_api::verify_package(
                 path,
                 &trusted_keys,
@@ -120,6 +136,7 @@ async fn serve(
         fs::create_dir_all(parent)?;
     }
     let listener = UnixListener::bind(endpoint)?;
+    let connections = Arc::new(Semaphore::new(64));
     fs::set_permissions(endpoint, fs::Permissions::from_mode(0o600))?;
     loop {
         tokio::select! {
@@ -128,7 +145,9 @@ async fn serve(
                 let database = Arc::clone(&database);
                 let token = token.clone();
                 let shutdown = Arc::clone(&shutdown);
+                let Ok(permit) = connections.clone().try_acquire_owned() else { continue };
                 tokio::spawn(async move {
+                    let _permit = permit;
                     if let Err(error) = handle_stream(stream, database, &token, shutdown).await {
                         tracing::warn!(%error, "client disconnected with error");
                     }
@@ -151,6 +170,7 @@ async fn serve(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let pipe_name = endpoint.to_string_lossy().into_owned();
+    let connections = Arc::new(Semaphore::new(64));
     loop {
         let server = ServerOptions::new().create(&pipe_name)?;
         tokio::select! {
@@ -159,7 +179,9 @@ async fn serve(
                 let database = Arc::clone(&database);
                 let token = token.clone();
                 let shutdown = Arc::clone(&shutdown);
+                let Ok(permit) = connections.clone().try_acquire_owned() else { continue };
                 tokio::spawn(async move {
+                    let _permit = permit;
                     handle_stream(server, database, &token, shutdown).await.ok();
                 });
             }
@@ -179,24 +201,38 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     loop {
-        let request: Request = match read_frame(&mut stream).await {
-            Ok(request) => request,
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
+        let request: Request =
+            match tokio::time::timeout(Duration::from_secs(30), read_frame(&mut stream)).await {
+                Err(_) => return Err(anyhow::anyhow!("client idle timeout")),
+                Ok(Ok(request)) => request,
+                Ok(Err(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(())
+                }
+                Ok(Err(error)) => return Err(error.into()),
+            };
         let operation_name = operation_name(&request.operation);
         let request_id = request.id.clone();
         let should_shutdown = matches!(request.operation, Operation::Shutdown);
         let started = Instant::now();
-        let result = if request.token == token {
-            dispatch(&database, request.operation)
-        } else {
+        let request_uuid = Uuid::parse_str(&request.id).unwrap_or_else(|_| Uuid::new_v4());
+        let result = if request.token != token {
             Err(LiliaError::new(
                 ErrorCode::Unauthorized,
                 "invalid daemon token",
                 false,
             ))
+        } else if request.deadline_ms.is_some_and(|deadline| {
+            deadline == 0 || started.elapsed().as_millis() >= u128::from(deadline)
+        }) {
+            Err(LiliaError::new(
+                ErrorCode::Timeout,
+                "request deadline exceeded",
+                true,
+            ))
+        } else {
+            dispatch(&database, request.operation)
         };
+        let result = result.map_err(|error| error.with_request_id(request_uuid));
         let success = result.is_ok();
         write_frame(
             &mut stream,
@@ -225,6 +261,7 @@ fn operation_name(operation: &Operation) -> &'static str {
         Operation::Handshake { .. } => "handshake",
         Operation::Shutdown => "shutdown",
         Operation::IntegrityCheck => "integrity_check",
+        Operation::Backup { .. } => "backup",
         Operation::KvGet { .. } => "kv_get",
         Operation::KvScan { .. } => "kv_scan",
         Operation::JsonGet { .. } => "json_get",
@@ -251,6 +288,10 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
         }
         Operation::Shutdown => ResponseValue::Shutdown,
         Operation::IntegrityCheck => ResponseValue::Integrity(database.integrity_check()?),
+        Operation::Backup { destination } => {
+            database.backup(destination)?;
+            ResponseValue::Ack
+        }
         Operation::KvGet { namespace, key } => {
             ResponseValue::Kv(database.kv_get(&namespace, &key)?)
         }

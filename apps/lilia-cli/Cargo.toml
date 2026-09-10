@@ -14,12 +14,14 @@ anyhow.workspace = true
 base64.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true
+hex.workspace = true
 lilia-core = { path = "../../crates/lilia-core" }
 lilia-storage-sqlite = { path = "../../crates/lilia-storage-sqlite" }
 lilia-plugin-api = { path = "../../crates/lilia-plugin-api" }
 lilia-protocol = { path = "../../crates/lilia-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 
