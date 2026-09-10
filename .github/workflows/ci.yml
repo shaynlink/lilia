@@ -23,6 +23,10 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Windows cross-account IPC denial
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/test-windows-accounts.ps1
       - run: cargo build --workspace --release
 
   node:
