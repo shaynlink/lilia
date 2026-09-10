@@ -19,11 +19,18 @@ CLI invalid JSON and MCP unknown aliases/malformed tool arguments have additiona
 transport-specific assertions. This is functional model conformance, not a complete
 MCP specification validator or a substitute for storage fault-injection tests.
 
-The fixtures deliberately use text-compatible KV keys (the CLI currently accepts
-text keys), small exact versions, and an already-expired timestamp rather than
-timing-dependent sleeps. Arbitrary binary CLI keys, full-range u64 transport
-precision, malformed JSON on every transport, scan mutation interleavings and
-all release prebuild installations remain separate coverage.
+The shared fixtures deliberately use text-compatible KV keys (the CLI currently
+accepts text keys) and an already-expired timestamp rather than timing-dependent
+sleeps. Versions in the JSON oracle are decimal strings.
+
+`versions.mjs` additionally creates fresh private fixtures using the Rust test-only
+producer, then checks exact reads/scans/updates/deletes above 2^53, conflicts with
+u64::MAX, exact conflict details, range rejection, rollback and i64::MAX storage
+exhaustion on the five surfaces. This helper never overwrites an existing file and
+is not exposed as a runtime database API. Protocol tests separately verify binary
+u64 round trips through the full request envelope. Arbitrary binary CLI keys,
+malformed JSON on every transport, scan mutation interleavings and all release
+prebuild installations remain separate coverage.
 
 CI executes this target on five native platforms with Node 24, and Linux x64 with
 Node 22/24/26. Nx caching is disabled for this end-to-end target so native artifacts

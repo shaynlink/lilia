@@ -1,6 +1,7 @@
 mod codec;
 mod error;
 mod types;
+mod version;
 
 pub use codec::{IdentityCodec, ValueCodec};
 pub use error::{ErrorCode, LiliaError, Result};

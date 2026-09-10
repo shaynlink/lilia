@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { BatchOperation, JsonEntry, KvEntry, MutationResult } from "./types.js";
 import { LiliaError } from "./types.js";
+import { checkedVersion, checkedExpiry, readVersion } from "./version.js";
 
 interface NativeKvEntry { namespace: string; key: Buffer; value: Buffer; version: string; expiresAtMs?: number }
 interface NativeDatabaseHandle {
@@ -45,8 +46,8 @@ export class EmbeddedClient {
 
   async batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> {
     const wire = operations.map(toNativeWire);
-    const result = JSON.parse(await nativeCall(this.native.batch(JSON.stringify(wire)))) as Array<{ version?: number | null; deleted: boolean }>;
-    return result.map(item => ({ ...item, version: item.version == null ? undefined : BigInt(item.version) }));
+    const result = JSON.parse(await nativeCall(this.native.batch(JSON.stringify(wire)))) as Array<{ version?: string | null; deleted: boolean }>;
+    return result.map(item => ({ ...item, version: item.version == null ? undefined : readVersion(item.version) }));
   }
 
   integrityCheck(): Promise<boolean> { return nativeCall(this.native.integrityCheck()); }
@@ -82,20 +83,20 @@ function nativePackagePlatform(): string {
 }
 
 function mapKv(entry: NativeKvEntry): KvEntry {
-  return { namespace: entry.namespace, key: entry.key, value: entry.value, version: BigInt(entry.version), expiresAtMs: entry.expiresAtMs };
+  return { namespace: entry.namespace, key: entry.key, value: entry.value, version: readVersion(entry.version), expiresAtMs: entry.expiresAtMs };
 }
 function parseJsonEntry(value: string): JsonEntry { return mapJson(JSON.parse(value) as Record<string, unknown>); }
 function mapJson(entry: Record<string, unknown>): JsonEntry {
-  return { space: String(entry.space), id: String(entry.id), value: entry.value as JsonEntry["value"], version: BigInt(entry.version as number) };
+  return { space: String(entry.space), id: String(entry.id), value: entry.value as JsonEntry["value"], version: readVersion(entry.version) };
 }
 function toNativeWire(operation: BatchOperation): Record<string, unknown> {
   const result = { ...operation } as Record<string, unknown>;
   if ("ifVersion" in operation) {
-    result.if_version = operation.ifVersion === undefined ? undefined : Number(operation.ifVersion);
+    result.if_version = checkedVersion(operation.ifVersion)?.toString();
     delete result.ifVersion;
   }
   if ("expiresAtMs" in operation) {
-    result.expires_at_ms = operation.expiresAtMs;
+    result.expires_at_ms = checkedExpiry(operation.expiresAtMs);
     delete result.expiresAtMs;
   }
   if (operation.model === "kv_set" || operation.model === "kv_delete") {
