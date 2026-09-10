@@ -13,8 +13,8 @@ use rand::RngCore;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows_sys::Win32::Foundation::{LocalFree, GENERIC_ALL, GENERIC_WRITE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
-    SDDL_REVISION_1, SE_FILE_OBJECT,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+    ConvertStringSidToSidW, GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
     EqualSid, GetAce, GetSecurityDescriptorControl, GetSecurityDescriptorOwner,
@@ -232,8 +232,19 @@ impl UserSecurity {
             {
                 return Err(io::Error::last_os_error());
             }
+            // Windows Modules Installer owns standard system ancestors (including
+            // drive roots). Trust this exact privileged service SID, not all services.
+            let installer = wide(OsStr::new(
+                "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+            ))?;
+            let mut installer_sid = std::ptr::null_mut();
+            if ConvertStringSidToSidW(installer.as_ptr(), &raw mut installer_sid) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let _installer_memory = LocalMemory(installer_sid);
             let trusted = |sid| {
                 EqualSid(sid, expected) != 0
+                    || EqualSid(sid, installer_sid) != 0
                     || IsWellKnownSid(sid, WinLocalSystemSid) != 0
                     || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0
             };

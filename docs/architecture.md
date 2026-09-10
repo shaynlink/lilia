@@ -85,7 +85,8 @@ or reparse points. The final parent must have a protected current-user-only DACL
 missing directories receive that DACL at creation. Existing files with broader or
 inherited ACLs are refused, not silently repaired. Directory handles deny delete
 sharing and remain open for the daemon lifetime to prevent ancestor replacement.
-Ancestors must be owned by the current user, SYSTEM or Administrators and must not
+Ancestors must be owned by the current user, SYSTEM, Administrators or the exact
+Windows Modules Installer (TrustedInstaller) service SID and must not
 grant other principals rights to modify data, attributes, ACLs, ownership or child
 deletion. This also prevents in-place junction conversion; delete sharing alone
 does not. Uninterpreted ACL entry types are refused.

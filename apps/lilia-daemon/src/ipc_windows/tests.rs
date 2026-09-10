@@ -18,7 +18,8 @@ fn assert_safe_ancestors(security: &UserSecurity, parent: &Path) {
             panic!(
                 "unsafe test ancestor {}: {error}; ACL: {}",
                 path.display(),
-                String::from_utf8_lossy(&acl.stdout)
+                String::from_utf8_lossy(&acl.stdout).to_string()
+                    + &String::from_utf8_lossy(&acl.stderr)
             );
         }
     }
@@ -107,7 +108,13 @@ fn rejects_mutable_ancestors_before_creating_private_children() {
     };
     let parent = temporary.path().join("mutable");
     private_parent(&public, &parent);
-    assert!(security.credentials(&parent.join("private/token")).is_err());
+    assert_eq!(
+        security
+            .credentials(&parent.join("private/token"))
+            .unwrap_err()
+            .to_string(),
+        "token ancestor permits mutation by another user"
+    );
     assert!(!parent.join("private").exists());
 }
 
