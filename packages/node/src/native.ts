@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { existsSync, copyFileSync } from "node:fs";
 import type { BatchOperation, JsonEntry, KvEntry, MutationResult } from "./types.js";
 import { LiliaError } from "./types.js";
 import { checkedVersion, checkedExpiry, readVersion } from "./version.js";
@@ -68,8 +69,35 @@ async function nativeCall<T>(operation: Promise<T>): Promise<T> {
 }
 
 function loadNative(): NativeModule {
-  const explicit = process.env.LILIA_NATIVE_PATH;
-  if (explicit) return require(explicit) as NativeModule;
+  let explicit = process.env.LILIA_NATIVE_PATH;
+  if (!explicit) {
+    const candidates = [
+      new URL("../../../target/debug/liblilia_node_native.dylib", import.meta.url).pathname,
+      new URL("../../../target/debug/liblilia_node_native.so", import.meta.url).pathname,
+      new URL("../../../target/debug/lilia_node_native.dll", import.meta.url).pathname,
+      new URL("../../../target/release/liblilia_node_native.dylib", import.meta.url).pathname,
+      new URL("../../../target/release/liblilia_node_native.so", import.meta.url).pathname,
+      new URL("../../../target/release/lilia_node_native.dll", import.meta.url).pathname,
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        explicit = candidate;
+        break;
+      }
+    }
+  }
+  if (explicit) {
+    if (!explicit.endsWith(".node")) {
+      const nodePath = `${explicit}.node`;
+      if (!existsSync(nodePath)) {
+        try { copyFileSync(explicit, nodePath); } catch {}
+      }
+      if (existsSync(nodePath)) {
+        explicit = nodePath;
+      }
+    }
+    return require(explicit) as NativeModule;
+  }
   const platform = nativePackagePlatform();
   try { return require(`@liliadb/node-${platform}`) as NativeModule; }
   catch (error) { throw new Error(`No LiliaDB native build for ${platform}; set LILIA_NATIVE_PATH`, { cause: error }); }

@@ -69,6 +69,27 @@ for a worker. Once work starts, the daemon returns its actual outcome rather tha
 claiming that a potentially committed write timed out. Omitting the field imposes no
 admission deadline. The existing frame-read idle timeout remains separate.
 
+## Node.js SDK streaming and keyset pagination
+
+Large scans in `@liliadb/node` avoid unbounded in-memory allocations and frame limit
+exhaustion through asynchronous streaming (`scanStream`, `stream`) and standard Node.js
+streams (`createReadStream`).
+
+- **Keyset pagination**: Scans progress strictly using the exclusive `after` cursor
+  (`WHERE key > ?` or `WHERE id > ?` ordered by key/id), eliminating offset drift and
+  redundant reads.
+- **Configurable chunking**: `batchSize` governs the maximum entries requested per
+  internal fetch (default: 100). If a batch returns fewer rows than requested, the
+  stream terminates cleanly without an unnecessary trailing empty query.
+- **Bounded traversal**: Optional `limit` specifies the total maximum entries yielded
+  across all batches. The final batch is automatically clamped (`fetchLimit = Math.min(batchSize, remaining)`).
+- **Lifecycle tracking**: Every internal page query is registered with the `Database`
+  pending set via `this.run(...)`. A graceful `db.close({ timeoutMs })` drains active
+  page fetches before shutting down the native engine or daemon connection.
+- **Node.js Stream interoperability**: `createReadStream` produces a `Readable` stream
+  in `objectMode` via `Readable.from(...)`, integrating natively with `stream.pipeline`
+  and transform streams.
+
 ## Unix IPC filesystem policy
 
 The daemon requires an owned, user-only parent directory for each socket and token.

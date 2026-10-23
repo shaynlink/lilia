@@ -6,10 +6,24 @@ import { connect } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import test from "node:test";
 
-import { Database, LiliaError, type DatabaseMode } from "./index.js";
+import { Database, LiliaError, type DatabaseMode, type JsonEntry, type KvEntry } from "./index.js";
 
-const nativePath = process.env.LILIA_NATIVE_PATH;
-const daemonBinary = process.env.LILIA_DAEMON_BIN;
+import { existsSync } from "node:fs";
+
+const candidateNative = [
+  new URL("../../../target/debug/lilia_node_native.node", import.meta.url).pathname,
+  new URL("../../../target/debug/liblilia_node_native.dylib", import.meta.url).pathname,
+  new URL("../../../target/debug/liblilia_node_native.so", import.meta.url).pathname,
+  new URL("../../../target/debug/lilia_node_native.dll", import.meta.url).pathname,
+].find(p => existsSync(p));
+
+const candidateDaemon = [
+  new URL("../../../target/debug/lilia-daemon", import.meta.url).pathname,
+  new URL("../../../target/debug/lilia-daemon.exe", import.meta.url).pathname,
+].find(p => existsSync(p));
+
+const nativePath = process.env.LILIA_NATIVE_PATH ?? candidateNative;
+const daemonBinary = process.env.LILIA_DAEMON_BIN ?? candidateDaemon;
 
 test("close timeout drains accepted JS calls and can be awaited again", async () => {
   let release!: (value: []) => void;
@@ -102,12 +116,105 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
     );
     assert.equal(await database.json.get("people", "grace"), undefined);
     assert.equal(await database.integrityCheck(), true);
+
+    // Verify streaming with real engine
+    const streamItems: JsonEntry[] = [];
+    for await (const entry of database.json.scanStream("people", { batchSize: 1 })) {
+      streamItems.push(entry);
+    }
+    assert.equal(streamItems.length, 1);
+    assert.equal(streamItems[0]?.id, "ada");
+
+    const streamKv: KvEntry[] = [];
+    for await (const entry of database.kv.scanStream("cache", { batchSize: 1 })) {
+      streamKv.push(entry);
+    }
+    assert.equal(streamKv.length, 1);
+    assert.equal(new TextDecoder().decode(streamKv[0]?.value), "42");
   } finally {
     await database.close();
   }
   await assert.rejects(database.integrityCheck(), (error: unknown) =>
     error instanceof LiliaError && error.code === "CLOSED");
 }
+
+test("scanStream and createReadStream paginate across batches and respect limits", async () => {
+  const entries: KvEntry[] = Array.from({ length: 25 }, (_, i) => ({
+    namespace: "test",
+    key: new Uint8Array([i]),
+    value: new Uint8Array([i * 2]),
+    version: BigInt(i + 1),
+  }));
+
+  const mockClient = {
+    kvScan: async (_ns: string, after: Uint8Array | undefined, limit: number) => {
+      const startIndex = after !== undefined ? after[0]! + 1 : 0;
+      return entries.slice(startIndex, startIndex + limit);
+    },
+    jsonScan: async (_sp: string, after: string | undefined, limit: number) => {
+      const startIndex = after !== undefined ? Number(after) + 1 : 0;
+      return entries.slice(startIndex, startIndex + limit).map(e => ({
+        space: "items",
+        id: String(e.key[0]),
+        value: { v: e.key[0] },
+        version: e.version,
+      }));
+    },
+    close: async () => {},
+  };
+
+  const db = Reflect.construct(Database, [mockClient]) as Database;
+
+  // 1. Full stream with batchSize 5
+  const full: KvEntry[] = [];
+  for await (const entry of db.kv.scanStream("test", { batchSize: 5 })) {
+    full.push(entry);
+  }
+  assert.equal(full.length, 25);
+  assert.equal(full[0]!.key[0], 0);
+  assert.equal(full[24]!.key[0], 24);
+
+  // 2. Global limit 12 with batchSize 5 (3 batches: 5, 5, 2)
+  const limited: KvEntry[] = [];
+  for await (const entry of db.kv.stream("test", { batchSize: 5, limit: 12 })) {
+    limited.push(entry);
+  }
+  assert.equal(limited.length, 12);
+  assert.equal(limited[11]!.key[0], 11);
+
+  // 3. Early break in for await
+  const earlyBreak: KvEntry[] = [];
+  for await (const entry of db.kv.scanStream("test", { batchSize: 5 })) {
+    earlyBreak.push(entry);
+    if (earlyBreak.length === 7) break;
+  }
+  assert.equal(earlyBreak.length, 7);
+
+  // 4. JSON scanStream
+  const jsonItems: JsonEntry[] = [];
+  for await (const item of db.json.scanStream("items", { batchSize: 10, limit: 15 })) {
+    jsonItems.push(item);
+  }
+  assert.equal(jsonItems.length, 15);
+  assert.equal(jsonItems[0]!.id, "0");
+  assert.equal(jsonItems[14]!.id, "14");
+
+  // 5. createReadStream Node.js stream
+  const chunks: JsonEntry[] = [];
+  const stream = db.json.createReadStream("items", { batchSize: 10, limit: 8 });
+  for await (const chunk of stream) {
+    chunks.push(chunk as JsonEntry);
+  }
+  assert.equal(chunks.length, 8);
+  assert.equal(chunks[7]!.id, "7");
+
+  // 6. Empty scanStream
+  const empty: KvEntry[] = [];
+  for await (const entry of db.kv.scanStream("empty", { limit: 0 })) {
+    empty.push(entry);
+  }
+  assert.equal(empty.length, 0);
+});
 
 async function waitUntilReady(tokenFile: string, endpoint: string, daemon: ChildProcess): Promise<void> {
   const deadline = Date.now() + 5_000;

@@ -1,8 +1,16 @@
 import { DaemonClient } from "./daemon.js";
 import { EmbeddedClient } from "./native.js";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { LiliaError } from "./types.js";
-import type { BatchOperation, JsonEntry, KvEntry, MutationResult, OpenOptions } from "./types.js";
+import type {
+  BatchOperation,
+  JsonEntry,
+  KvEntry,
+  MutationResult,
+  OpenOptions,
+  ScanStreamOptions,
+} from "./types.js";
 
 export * from "./types.js";
 
@@ -43,6 +51,12 @@ export class Database {
       (await this.batch([{ model: "kv_delete", namespace, key, ...options }]))[0]!,
     scan: (namespace: string, options: { after?: Uint8Array; limit?: number } = {}): Promise<KvEntry[]> =>
       this.run(client => client.kvScan(namespace, options.after, options.limit ?? 100)),
+    scanStream: (namespace: string, options: ScanStreamOptions<Uint8Array> = {}): AsyncIterableIterator<KvEntry> =>
+      this.kvScanStream(namespace, options),
+    stream: (namespace: string, options: ScanStreamOptions<Uint8Array> = {}): AsyncIterableIterator<KvEntry> =>
+      this.kvScanStream(namespace, options),
+    createReadStream: (namespace: string, options: ScanStreamOptions<Uint8Array> = {}): Readable =>
+      Readable.from(this.kvScanStream(namespace, options), { objectMode: true }),
   };
 
   readonly json = {
@@ -53,6 +67,12 @@ export class Database {
       (await this.batch([{ model: "json_delete", space, id, ...options }]))[0]!,
     scan: (space: string, options: { after?: string; limit?: number } = {}): Promise<JsonEntry[]> =>
       this.run(client => client.jsonScan(space, options.after, options.limit ?? 100)),
+    scanStream: (space: string, options: ScanStreamOptions<string> = {}): AsyncIterableIterator<JsonEntry> =>
+      this.jsonScanStream(space, options),
+    stream: (space: string, options: ScanStreamOptions<string> = {}): AsyncIterableIterator<JsonEntry> =>
+      this.jsonScanStream(space, options),
+    createReadStream: (space: string, options: ScanStreamOptions<string> = {}): Readable =>
+      Readable.from(this.jsonScanStream(space, options), { objectMode: true }),
   };
 
   batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> { return this.run(client => client.batch(operations)); }
@@ -84,6 +104,56 @@ export class Database {
     this.pending.add(operation);
     void operation.then(() => this.pending.delete(operation), () => this.pending.delete(operation));
     return operation;
+  }
+
+  private async *kvScanStream(namespace: string, options: ScanStreamOptions<Uint8Array>): AsyncIterableIterator<KvEntry> {
+    const batchSize = Math.max(1, options.batchSize ?? 100);
+    let remaining = options.limit !== undefined ? Math.max(0, options.limit) : Infinity;
+    let cursor = options.after;
+
+    while (remaining > 0) {
+      const fetchLimit = Math.min(batchSize, remaining);
+      const batch = await this.run(client => client.kvScan(namespace, cursor, fetchLimit));
+      if (batch.length === 0) {
+        break;
+      }
+      for (const entry of batch) {
+        yield entry;
+        remaining--;
+        if (remaining <= 0) {
+          break;
+        }
+      }
+      if (batch.length < fetchLimit) {
+        break;
+      }
+      cursor = batch[batch.length - 1]!.key;
+    }
+  }
+
+  private async *jsonScanStream(space: string, options: ScanStreamOptions<string>): AsyncIterableIterator<JsonEntry> {
+    const batchSize = Math.max(1, options.batchSize ?? 100);
+    let remaining = options.limit !== undefined ? Math.max(0, options.limit) : Infinity;
+    let cursor = options.after;
+
+    while (remaining > 0) {
+      const fetchLimit = Math.min(batchSize, remaining);
+      const batch = await this.run(client => client.jsonScan(space, cursor, fetchLimit));
+      if (batch.length === 0) {
+        break;
+      }
+      for (const entry of batch) {
+        yield entry;
+        remaining--;
+        if (remaining <= 0) {
+          break;
+        }
+      }
+      if (batch.length < fetchLimit) {
+        break;
+      }
+      cursor = batch[batch.length - 1]!.id;
+    }
   }
 }
 

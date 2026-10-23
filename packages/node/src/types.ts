@@ -30,6 +30,12 @@ export interface JsonEntry {
   version: bigint;
 }
 
+export interface ScanStreamOptions<T = string | Uint8Array> {
+  after?: T;
+  limit?: number;
+  batchSize?: number;
+}
+
 export type BatchOperation =
   | { model: "kv_set"; namespace: string; key: Uint8Array; value: Uint8Array; ifVersion?: bigint; expiresAtMs?: number }
   | { model: "kv_delete"; namespace: string; key: Uint8Array; ifVersion?: bigint }
