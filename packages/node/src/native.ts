@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync, copyFileSync } from "node:fs";
-import type { BatchOperation, JsonEntry, KvEntry, MutationResult } from "./types.js";
+import type { BatchOperation, JsonEntry, JsonValue, KvEntry, MutationResult, SqlQueryResult } from "./types.js";
 import { LiliaError } from "./types.js";
 import { checkedVersion, checkedExpiry, readVersion } from "./version.js";
 
@@ -13,6 +13,7 @@ interface NativeDatabaseHandle {
   batch(operations: string): Promise<string>;
   integrityCheck(): Promise<boolean>;
   backup(destination: string): Promise<void>;
+  sqlQuery(sql: string, paramsJson?: string): Promise<string>;
   close(timeoutMs?: number): Promise<void>;
 }
 interface NativeModule { NativeDatabase: { open(options: Record<string, unknown>): Promise<NativeDatabaseHandle> } }
@@ -49,6 +50,11 @@ export class EmbeddedClient {
     const wire = operations.map(toNativeWire);
     const result = JSON.parse(await nativeCall(this.native.batch(JSON.stringify(wire)))) as Array<{ version?: string | null; deleted: boolean }>;
     return result.map(item => ({ ...item, version: item.version == null ? undefined : readVersion(item.version) }));
+  }
+
+  async sqlQuery(sql: string, params: unknown[] = []): Promise<SqlQueryResult> {
+    const raw = await nativeCall(this.native.sqlQuery(sql, JSON.stringify(params)));
+    return mapSqlQueryResult(JSON.parse(raw) as Record<string, unknown>);
   }
 
   integrityCheck(): Promise<boolean> { return nativeCall(this.native.integrityCheck()); }
@@ -132,4 +138,21 @@ function toNativeWire(operation: BatchOperation): Record<string, unknown> {
     if (operation.model === "kv_set") result.value = [...operation.value];
   }
   return result;
+}
+
+export function mapSqlQueryResult<T = Record<string, unknown>>(raw: Record<string, unknown>): SqlQueryResult<T> {
+  const columns = (raw.columns as string[]) ?? [];
+  const rows = (raw.rows as JsonValue[][]) ?? [];
+  const rowsAffected = Number(raw.rows_affected ?? 0);
+  const records: T[] = rows.map(row => {
+    const obj: Record<string, unknown> = {};
+    for (let i = 0; i < columns.length; i++) {
+      const col = columns[i];
+      if (col !== undefined) {
+        obj[col] = row[i];
+      }
+    }
+    return obj as T;
+  });
+  return { columns, rows, rowsAffected, records };
 }

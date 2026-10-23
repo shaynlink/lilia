@@ -115,8 +115,6 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
       (error: unknown) => error instanceof LiliaError || error instanceof Error,
     );
     assert.equal(await database.json.get("people", "grace"), undefined);
-    assert.equal(await database.integrityCheck(), true);
-
     // Verify streaming with real engine
     const streamItems: JsonEntry[] = [];
     for await (const entry of database.json.scanStream("people", { batchSize: 1 })) {
@@ -131,6 +129,44 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
     }
     assert.equal(streamKv.length, 1);
     assert.equal(new TextDecoder().decode(streamKv[0]?.value), "42");
+
+    // Verify SQL query, raw, and execute
+    interface PersonRow {
+      id: string;
+      name: string;
+      version: number;
+    }
+    const sqlRows = await database.sql.query<PersonRow>(
+      "SELECT id, json_extract(value, '$.name') AS name, version FROM lilia_json WHERE space = ?1",
+      ["people"],
+    );
+    assert.equal(sqlRows.length, 1);
+    assert.equal(sqlRows[0]?.id, "ada");
+    assert.equal(sqlRows[0]?.name, "Ada");
+    assert.equal(sqlRows[0]?.version, 1);
+
+    const raw = await database.sql.raw(
+      "SELECT id, json_extract(value, '$.name') AS name FROM lilia_json WHERE space = ?1",
+      ["people"],
+    );
+    assert.deepEqual(raw.columns, ["id", "name"]);
+    assert.deepEqual(raw.rows, [["ada", "Ada"]]);
+    assert.equal(raw.rowsAffected, 0);
+
+    const affected = await database.sql.execute(
+      "UPDATE _lilia_json SET version = version + 1 WHERE space = ?1 AND id = ?2",
+      ["people", "ada"],
+    );
+    assert.equal(affected.rowsAffected, 1);
+    const updatedDoc = await database.json.get("people", "ada");
+    assert.equal(updatedDoc?.version, 2n);
+
+    await assert.rejects(
+      database.sql.query("SELECT * FROM non_existent_table"),
+      (error: unknown) => error instanceof LiliaError || error instanceof Error,
+    );
+
+    assert.equal(await database.integrityCheck(), true);
   } finally {
     await database.close();
   }

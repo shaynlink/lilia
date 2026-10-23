@@ -44,6 +44,13 @@ export type BatchOperation =
 
 export interface MutationResult { version?: bigint; deleted: boolean }
 
+export interface SqlQueryResult<T = Record<string, unknown>> {
+  columns: string[];
+  rows: JsonValue[][];
+  rowsAffected: number;
+  records: T[];
+}
+
 export interface LiliaErrorShape {
   code: string;
   message: string;

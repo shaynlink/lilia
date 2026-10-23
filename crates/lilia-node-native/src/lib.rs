@@ -215,6 +215,23 @@ impl NativeDatabase {
     }
 
     #[napi]
+    pub async fn sql_query(&self, sql: String, params_json: Option<String>) -> Result<String> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let params: Vec<serde_json::Value> = match params_json {
+                Some(ref s) if !s.trim().is_empty() => serde_json::from_str(s)
+                    .map_err(|e| Error::new(Status::InvalidArg, e.to_string()))?,
+                _ => Vec::new(),
+            };
+            let result = database.sql_query(&sql, &params).map_err(napi_error)?;
+            serde_json::to_string(&result)
+                .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
     pub async fn close(&self, timeout_ms: Option<u32>) -> Result<()> {
         let database = Arc::clone(&self.inner);
         let started = std::time::Instant::now();

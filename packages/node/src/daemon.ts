@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import { decode, encode } from "@msgpack/msgpack";
-import { LiliaError, type BatchOperation, type JsonEntry, type KvEntry, type MutationResult } from "./types.js";
+import { LiliaError, type BatchOperation, type JsonEntry, type KvEntry, type MutationResult, type SqlQueryResult } from "./types.js";
 import { checkedVersion, checkedExpiry, readVersion, jsonNumbers } from "./version.js";
+import { mapSqlQueryResult } from "./native.js";
 
 interface WireResponse { id: string; result: { Ok?: unknown; Err?: { message: string; code: string; retryable: boolean; request_id: string | Uint8Array } } }
 
@@ -34,6 +35,10 @@ export class DaemonClient {
   }
   async integrityCheck(): Promise<boolean> { return Boolean(await this.call({ type: "integrity_check" })); }
   async backup(destination: string): Promise<void> { await this.call({ type: "backup", destination }); }
+  async sqlQuery(sql: string, params: unknown[] = []): Promise<SqlQueryResult> {
+    const raw = (await this.call({ type: "sql_query", sql, params })) as Record<string, unknown>;
+    return mapSqlQueryResult(raw);
+  }
   close(_timeoutMs?: number): Promise<void> { return Promise.resolve(); }
 
   private async call(operation: Record<string, unknown>): Promise<unknown> {

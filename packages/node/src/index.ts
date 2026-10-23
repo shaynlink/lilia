@@ -6,10 +6,12 @@ import { LiliaError } from "./types.js";
 import type {
   BatchOperation,
   JsonEntry,
+  JsonValue,
   KvEntry,
   MutationResult,
   OpenOptions,
   ScanStreamOptions,
+  SqlQueryResult,
 } from "./types.js";
 
 export * from "./types.js";
@@ -73,6 +75,15 @@ export class Database {
       this.jsonScanStream(space, options),
     createReadStream: (space: string, options: ScanStreamOptions<string> = {}): Readable =>
       Readable.from(this.jsonScanStream(space, options), { objectMode: true }),
+  };
+
+  readonly sql = {
+    query: <T = Record<string, unknown>>(sql: string, params: JsonValue[] = []): Promise<T[]> =>
+      this.run(async client => (await client.sqlQuery(sql, params)).records as T[]),
+    execute: (sql: string, params: JsonValue[] = []): Promise<{ rowsAffected: number }> =>
+      this.run(async client => ({ rowsAffected: (await client.sqlQuery(sql, params)).rowsAffected })),
+    raw: <T = Record<string, unknown>>(sql: string, params: JsonValue[] = []): Promise<SqlQueryResult<T>> =>
+      this.run(client => client.sqlQuery(sql, params) as Promise<SqlQueryResult<T>>),
   };
 
   batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> { return this.run(client => client.batch(operations)); }
