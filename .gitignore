@@ -9,3 +9,4 @@ dist/
 *.token
 *.node
 .DS_Store
+*.asc
