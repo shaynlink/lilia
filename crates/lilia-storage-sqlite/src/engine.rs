@@ -150,6 +150,7 @@ fn configure_connection(
     synchronous: &str,
     busy_timeout: Duration,
     mmap_size: u64,
+    codec: &Arc<dyn ValueCodec>,
 ) -> Result<()> {
     conn.busy_timeout(busy_timeout)?;
     conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
@@ -161,6 +162,7 @@ fn configure_connection(
         let size = i64::try_from(mmap_size).unwrap_or(i64::MAX);
         conn.pragma_update(None, "mmap_size", size)?;
     }
+    crate::sql::register_sql_functions(conn, codec)?;
     Ok(())
 }
 
@@ -224,6 +226,7 @@ impl Database {
             synchronous,
             Duration::from_millis(options.busy_timeout_ms),
             options.mmap_size_bytes,
+            &options.codec,
         )?;
         // Disable SQLite's commit-path checkpoint in favor of background work.
         connection.pragma_update(None, "wal_autocheckpoint", 0)?;
@@ -237,6 +240,7 @@ impl Database {
                 synchronous,
                 Duration::from_millis(options.busy_timeout_ms),
                 options.mmap_size_bytes,
+                &options.codec,
             )?;
             reader.pragma_update(None, "query_only", true)?;
             readers.push(Mutex::new(Some(reader)));

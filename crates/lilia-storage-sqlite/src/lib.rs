@@ -5,6 +5,7 @@ mod graph;
 mod json;
 mod kv;
 mod lifecycle;
+mod sql;
 mod storage;
 mod transaction;
 mod writer_queue;

@@ -65,6 +65,18 @@ pub(crate) fn migrate(connection: &Connection) -> Result<()> {
            content,
            tokenize='unicode61'
          );
+         CREATE VIEW IF NOT EXISTS lilia_kv AS
+           SELECT namespace, key, lilia_decode_kv(value) AS value, version, expires_at_ms
+           FROM _lilia_kv;
+         CREATE VIEW IF NOT EXISTS lilia_json AS
+           SELECT space, id, lilia_decode_json(value) AS value, version
+           FROM _lilia_json;
+         CREATE VIEW IF NOT EXISTS lilia_graph_nodes AS
+           SELECT graph, id, kind, metadata
+           FROM _lilia_graph_nodes;
+         CREATE VIEW IF NOT EXISTS lilia_graph_edges AS
+           SELECT graph, source, target, kind
+           FROM _lilia_graph_edges;
          COMMIT;",
     )?;
     Ok(())
