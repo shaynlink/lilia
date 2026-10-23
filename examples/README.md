@@ -55,6 +55,21 @@ node examples/node-daemon.mjs
 
 ---
 
+### 4. Declarative SQL Querying (`node-sql.mjs`)
+Demonstrates SQL queries across structured views:
+- Querying documents via `lilia_json` view using `json_extract()`
+- Running aggregations (`COUNT`, `AVG`, `GROUP BY`)
+- Typed record projections with `db.sql.query<T>()`
+- Raw matrix projections (`columns`, `rows`) with `db.sql.raw()`
+- Executing mutations and updates via `db.sql.execute()`
+
+**Run:**
+```sh
+node examples/node-sql.mjs
+```
+
+---
+
 ## Native Rust Examples (`crates/lilia-storage-sqlite/examples`)
 
 Native Rust applications can embed LiliaDB directly with zero FFI overhead.
@@ -98,4 +113,20 @@ Demonstrates:
 ```sh
 cargo run --example encryption -p lilia-storage-sqlite
 ```
+
+---
+
+### 4. Declarative SQL Querying (`sql.rs`)
+Demonstrates:
+- Querying documents and KV pairs declaratively using `db.sql_query()`
+- Parameterized queries with positional bindings (`?1`, `?2`)
+- Aggregations and grouping on JSON fields with `json_extract()`
+- Transparent on-the-fly decryption via custom SQLite scalar functions (`lilia_decode_kv`, `lilia_decode_json`)
+- Routing read-only queries to the reader pool and write mutations to the exclusive writer queue
+
+**Run:**
+```sh
+cargo run --example sql -p lilia-storage-sqlite
+```
+
 

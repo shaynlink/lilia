@@ -242,6 +242,20 @@ WAL corruption cases, or failures across all public transports. Those remain
 separate resilience work; a corrupt database is diagnosed, not automatically
 repaired.
 
+## Declarative SQL Querying & SQL Plugin
+
+Declarative SQL querying is integrated into LiliaDB's SQLite engine and plugin architecture via `Capability::Sql` and `plugins/lilia-plugin-sql`.
+
+- **Predefined Views**: Internal schema tables `_lilia_kv`, `_lilia_json`, `_lilia_graph_nodes`, and `_lilia_graph_edges` are exposed to callers via read-only SQL views (`lilia_kv`, `lilia_json`, `lilia_graph_nodes`, `lilia_graph_edges`).
+- **Transparent Decoding Scalar Functions**: Custom SQLite scalar functions `lilia_decode_kv` and `lilia_decode_json` are deterministically registered on every connection. If an encryption codec (`ValueCodec`) is mounted, raw ciphertext and `{"$codec": ...}` envelopes are decrypted on the fly within SQLite queries without storing plaintext on disk.
+- **Statement Routing**: Before executing, statements are parsed and checked via `stmt.readonly()`. Read-only queries (`SELECT`, `EXPLAIN`) run concurrently on the reader pool connections (`query_only = true`). Mutating queries (`INSERT`, `UPDATE`, `DELETE`) are routed through the serialized exclusive writer queue.
+- **Cross-Surface Support**: Declarative SQL is accessible uniformly across:
+  - Native Rust: `db.sql_query(&sql, &params)`
+  - Node.js SDK: `db.sql.query<T>()`, `db.sql.raw()`, and `db.sql.execute()`
+  - Local Daemon & IPC: `Operation::SqlQuery` and `ResponseValue::Sql`
+  - CLI: `lilia sql <QUERY> [--param <P>]` with human ASCII table, JSON, and JSONL output
+  - MCP: `lilia_sql_query` tool
+
 ## Roadmap boundaries
 
 The [shared conformance suite](../tools/conformance/README.md) runs one ordered
@@ -251,5 +265,6 @@ code 1 and no result on stdout; JSON parse failures use `INVALID_INPUT`. Clap's
 command-line usage errors remain separate (exit code 2). Node native errors are
 decoded into `LiliaError`, and binary daemon error UUIDs become string request IDs.
 
-SQL, Document, Graph, replication, networking, and encryption are not part of the first format.
-Their future plugins must use the same transaction boundary and protect `_lilia_*` tables.
+Document, Graph, and replication plugins continue active development adhering to
+the same transaction boundary and protecting `_lilia_*` tables.
+

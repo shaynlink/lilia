@@ -213,7 +213,65 @@ const results = await db.batch([
   },
 ]);
 
-// If any conditional check fails, the ENTIRE batch rolls back atomically.
+---
+
+## Declarative SQL Querying (`db.sql`)
+
+LiliaDB provides declarative SQL querying directly over its multi-model storage via predefined SQLite views. Custom scalar functions (`lilia_decode_kv`, `lilia_decode_json`) automatically handle transparent on-the-fly decryption if an encryption codec is enabled.
+
+### Available Views
+- **`lilia_json`**: `(space, id, value, version)` — `value` is decoded plaintext JSON, allowing native SQLite `json_extract()`, `json_tree()`, and JSON operators.
+- **`lilia_kv`**: `(namespace, key, value, version, expires_at_ms)` — `value` is decoded plaintext bytes.
+- **`lilia_graph_nodes`**: `(graph, id, kind, metadata)`
+- **`lilia_graph_edges`**: `(graph, source, target, kind)`
+
+### Typed SQL Queries (`db.sql.query`)
+Returns an array of typed objects mapped directly from column names:
+
+```ts
+interface Developer {
+  id: string;
+  name: string;
+  points: number;
+}
+
+const devs = await db.sql.query<Developer>(
+  `SELECT
+     id,
+     json_extract(value, '$.name') AS name,
+     json_extract(value, '$.points') AS points
+   FROM lilia_json
+   WHERE space = ?1 AND json_extract(value, '$.points') >= ?2
+   ORDER BY points DESC`,
+  ["developers", 900],
+);
+
+for (const dev of devs) {
+  console.log(`${dev.name}: ${dev.points} pts`);
+}
+```
+
+### Raw Projections (`db.sql.raw`)
+Returns a `{ columns, rows, rowsAffected }` structure for raw projections or tabular displays:
+
+```ts
+const raw = await db.sql.raw(
+  "SELECT id, json_extract(value, '$.role') AS role FROM lilia_json WHERE space = ?1",
+  ["users"],
+);
+console.log(raw.columns); // ["id", "role"]
+console.log(raw.rows);    // [["ada", "admin"], ...]
+```
+
+### Executing Mutations (`db.sql.execute`)
+Executes mutating SQL statements via the write queue and returns `{ rowsAffected: number }`:
+
+```ts
+const { rowsAffected } = await db.sql.execute(
+  "UPDATE _lilia_json SET version = version + 1 WHERE space = ?1",
+  ["users"],
+);
+console.log(`Updated ${rowsAffected} rows`);
 ```
 
 ---

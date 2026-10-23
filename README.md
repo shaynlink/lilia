@@ -6,8 +6,7 @@ daemon, Node.js, CLI, and MCP entry points.
 
 ## Status
 
-This repository contains the `0.1.0-alpha.1` foundation. SQL, Document, Graph, and encryption are planned
-as separately installed native plugins; they are not claimed as implemented yet.
+This repository contains the `0.1.0-alpha.1` foundation. Key/Value and JSON Document storage are implemented natively. SQL declarative querying is provided via the official SQL plugin (`plugins/lilia-plugin-sql`) and preconfigured views across the engine, daemon, CLI (`lilia sql`), Node.js SDK (`db.sql`), and MCP server (`lilia_sql_query`). Encryption at rest is supported via pluggable codecs (`ValueCodec`). Graph and fulltext indexing plugins are in active development.
 
 ## Quick start
 
@@ -19,6 +18,7 @@ pnpm test
 pnpm lilia -- --database ./demo.lilia init --output json
 pnpm lilia -- --database ./demo.lilia json put users ada '{"name":"Ada"}' --output json
 pnpm lilia -- --database ./demo.lilia json get users ada --output json
+pnpm lilia -- --database ./demo.lilia sql "SELECT id, json_extract(value, '$.name') AS name FROM lilia_json WHERE space = 'users'"
 pnpm lilia -- --database ./demo.lilia backup ./snapshots/demo.lilia --output json
 ```
 
