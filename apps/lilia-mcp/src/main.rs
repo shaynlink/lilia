@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use clap::Parser;
@@ -157,6 +157,18 @@ fn call_tool(
                     .map_err(json_error)?;
             serde_json::to_value(database.batch(&operations)?).map_err(json_error)
         }
+        "lilia_backup" => {
+            let destination = required_str(args, "destination")?;
+            database.backup(Path::new(destination))?;
+            Ok(json!({"ok": true, "destination": destination}))
+        }
+        "lilia_integrity_check" => {
+            let valid = database.integrity_check()?;
+            Ok(json!({"ok": valid, "database": alias}))
+        }
+        "lilia_checkpoint_stats" => {
+            serde_json::to_value(database.checkpoint_stats()).map_err(json_error)
+        }
         _ => Err(lilia_core::LiliaError::new(
             lilia_core::ErrorCode::NotFound,
             "unknown LiliaDB tool",
@@ -193,6 +205,21 @@ fn tool_definitions() -> Vec<Value> {
             "lilia_batch",
             json!({"database": string(), "operations": {"type":"array", "items":{"type":"object"}, "maxItems":1000}}),
             &["database", "operations"],
+        ),
+        tool(
+            "lilia_backup",
+            json!({"database": string(), "destination": {"type": "string", "description": "target backup path"}}),
+            &["database", "destination"],
+        ),
+        tool(
+            "lilia_integrity_check",
+            json!({"database": string()}),
+            &["database"],
+        ),
+        tool(
+            "lilia_checkpoint_stats",
+            json!({"database": string()}),
+            &["database"],
         ),
     ]
 }
@@ -251,4 +278,58 @@ fn rpc_result(id: Value, result: Value) -> Value {
 }
 fn rpc_error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0", "id":id, "error":{"code":code, "message":message}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn tool_definitions_include_new_tools() {
+        let tools = tool_definitions();
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"lilia_backup"));
+        assert!(names.contains(&"lilia_integrity_check"));
+        assert!(names.contains(&"lilia_checkpoint_stats"));
+    }
+
+    #[test]
+    fn call_admin_tools() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.lilia");
+        let database = Database::open(DatabaseOptions::durable(&path)).unwrap();
+        let mut databases = HashMap::new();
+        databases.insert("demo".to_string(), database);
+
+        let integrity = call_tool(
+            &databases,
+            "lilia_integrity_check",
+            &json!({"database": "demo"}),
+        )
+        .unwrap();
+        assert_eq!(integrity["ok"], true);
+        assert_eq!(integrity["database"], "demo");
+
+        let stats = call_tool(
+            &databases,
+            "lilia_checkpoint_stats",
+            &json!({"database": "demo"}),
+        )
+        .unwrap();
+        assert!(stats.get("attempts").is_some());
+
+        let backup_path = dir.path().join("backup.lilia");
+        let backup = call_tool(
+            &databases,
+            "lilia_backup",
+            &json!({"database": "demo", "destination": backup_path.to_str().unwrap()}),
+        )
+        .unwrap();
+        assert_eq!(backup["ok"], true);
+        assert!(backup_path.exists());
+    }
 }

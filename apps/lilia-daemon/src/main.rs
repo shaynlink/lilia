@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let arguments = Arguments::parse();
-    let _plugins = load_plugins(&arguments)?;
+    let plugins = load_plugins(&arguments)?;
     // Claim the endpoint before rotating credentials; duplicate startup must not
     // invalidate the token of an already running daemon.
     #[cfg(unix)]
@@ -68,9 +68,15 @@ async fn main() -> anyhow::Result<()> {
     let credentials = security.credentials(&arguments.token_file)?;
     #[cfg(windows)]
     let token = credentials.token.clone();
-    let database = Arc::new(Database::open(DatabaseOptions::durable(
-        &arguments.database,
-    ))?);
+    let mut options = DatabaseOptions::durable(&arguments.database);
+    for plugin in &plugins {
+        if let Some(codec) = plugin.codec() {
+            info!(codec = %codec.name(), "enabled plugin storage codec");
+            options = options.with_codec(Arc::new(codec));
+            break;
+        }
+    }
+    let database = Arc::new(Database::open(options)?);
     let shutdown = Arc::new(Notify::new());
     info!(database = %arguments.database.display(), "daemon started");
     #[cfg(unix)]

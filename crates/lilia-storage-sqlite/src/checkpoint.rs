@@ -5,11 +5,13 @@ use std::time::{Duration, Instant};
 
 use lilia_core::{ErrorCode, LiliaError, Result};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 use crate::engine::CheckpointPolicy;
+use crate::storage::is_uri_or_memory;
 
 /// Background attempts only; explicit checkpoints are not included.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointStats {
     pub attempts: u64,
     pub incomplete: u64,
@@ -27,10 +29,21 @@ pub(crate) struct Checkpointer {
 
 impl Checkpointer {
     pub(crate) fn start(path: &Path, policy: CheckpointPolicy, synchronous: &str) -> Result<Self> {
-        let connection = Connection::open(path)?;
+        let connection = if is_uri_or_memory(path) {
+            Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+            )?
+        } else {
+            Connection::open(path)?
+        };
         connection.busy_timeout(Duration::ZERO)?;
+        connection.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
         connection.pragma_update(None, "synchronous", synchronous)?;
         connection.pragma_update(None, "wal_autocheckpoint", 0)?;
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
         // Initialize this connection's WAL view before inspecting checkpoint state.
         connection.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
             row.get::<_, i64>(0)

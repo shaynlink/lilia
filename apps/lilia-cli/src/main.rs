@@ -35,8 +35,10 @@ fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let value = match arguments.command {
         Command::Plugin { command } => plugins::execute(command, arguments.output)?,
-        Command::Daemon { command } => daemon::execute(command, &arguments.database)?,
-        command => models::execute(command, &arguments.database)?,
+        Command::Daemon { command } => {
+            daemon::execute(command, &arguments.database, arguments.plugin.as_deref())?
+        }
+        command => models::execute(command, &arguments.database, arguments.plugin.as_deref())?,
     };
     print_value(arguments.output, &value)?;
     Ok(())

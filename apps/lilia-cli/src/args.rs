@@ -9,6 +9,8 @@ pub(crate) struct Arguments {
     pub(crate) output: Output,
     #[arg(long, global = true, default_value = "lilia.lilia")]
     pub(crate) database: PathBuf,
+    #[arg(long = "plugin", global = true)]
+    pub(crate) plugin: Option<PathBuf>,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
@@ -18,6 +20,14 @@ pub(crate) enum Output {
     Human,
     Json,
     Jsonl,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Encoding {
+    #[default]
+    Text,
+    Hex,
+    Base64,
 }
 
 #[derive(Debug, Subcommand)]
@@ -80,6 +90,10 @@ pub(crate) enum KvCommand {
     Get {
         namespace: String,
         key: String,
+        #[arg(long, default_value = "text")]
+        encoding: Encoding,
+        #[arg(long)]
+        key_encoding: Option<Encoding>,
     },
     Set {
         namespace: String,
@@ -89,12 +103,22 @@ pub(crate) enum KvCommand {
         if_version: Option<u64>,
         #[arg(long)]
         expires_at_ms: Option<i64>,
+        #[arg(long, default_value = "text")]
+        encoding: Encoding,
+        #[arg(long)]
+        key_encoding: Option<Encoding>,
+        #[arg(long)]
+        value_encoding: Option<Encoding>,
     },
     Delete {
         namespace: String,
         key: String,
         #[arg(long)]
         if_version: Option<u64>,
+        #[arg(long, default_value = "text")]
+        encoding: Encoding,
+        #[arg(long)]
+        key_encoding: Option<Encoding>,
     },
     Scan {
         namespace: String,
@@ -102,6 +126,10 @@ pub(crate) enum KvCommand {
         after: Option<String>,
         #[arg(long, default_value_t = 100)]
         limit: u32,
+        #[arg(long, default_value = "text")]
+        encoding: Encoding,
+        #[arg(long)]
+        key_encoding: Option<Encoding>,
     },
 }
 

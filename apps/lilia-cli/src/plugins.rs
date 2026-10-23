@@ -41,7 +41,7 @@ pub(crate) fn execute(command: PluginCommand, output: Output) -> anyhow::Result<
                 &verification_keys(Some(&root), &trusted_keys, development)?,
                 unsigned_policy(allow_unsigned, development)?,
             )?;
-            Ok(json!({"installed": path}))
+            Ok(json!({ "installed": path }))
         }
         PluginCommand::List { root, development } => {
             Ok(json!(installed_names(&selected_root(root, development)?)?))
@@ -63,7 +63,7 @@ pub(crate) fn execute(command: PluginCommand, output: Output) -> anyhow::Result<
             require_real_directory(&path, "installed plugin")?;
             require_real_directory(&path.join("package"), "installed plugin package")?;
             fs::remove_dir_all(&path)?;
-            Ok(json!({"removed": path}))
+            Ok(json!({ "removed": path }))
         }
     }
 }

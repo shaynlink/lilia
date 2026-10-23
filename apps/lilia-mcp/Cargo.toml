@@ -13,5 +13,8 @@ lilia-core = { path = "../../crates/lilia-core" }
 lilia-storage-sqlite = { path = "../../crates/lilia-storage-sqlite" }
 serde_json.workspace = true
 
+[dev-dependencies]
+tempfile = "3.27.0"
+
 [lints]
 workspace = true
