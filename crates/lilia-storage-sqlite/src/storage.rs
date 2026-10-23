@@ -31,12 +31,54 @@ pub(crate) fn migrate(connection: &Connection) -> Result<()> {
            version INTEGER NOT NULL CHECK(version > 0),
            PRIMARY KEY(space,id)
          ) STRICT, WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS _lilia_graph_nodes(
+           graph TEXT NOT NULL,
+           id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           metadata TEXT NOT NULL CHECK(json_valid(metadata)),
+           PRIMARY KEY(graph,id)
+         ) STRICT, WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS _lilia_graph_edges(
+           graph TEXT NOT NULL,
+           source TEXT NOT NULL,
+           target TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           PRIMARY KEY(graph,source,target,kind)
+         ) STRICT, WITHOUT ROWID;
+         CREATE INDEX IF NOT EXISTS _lilia_graph_edges_target ON _lilia_graph_edges(graph,target);
+         CREATE TABLE IF NOT EXISTS _lilia_json_indexes(
+           space TEXT NOT NULL,
+           index_name TEXT NOT NULL,
+           json_path TEXT NOT NULL,
+           PRIMARY KEY(space,index_name)
+         ) STRICT, WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS _lilia_json_index_entries(
+           space TEXT NOT NULL,
+           index_name TEXT NOT NULL,
+           idx_value TEXT NOT NULL,
+           doc_id TEXT NOT NULL,
+           PRIMARY KEY(space,index_name,idx_value,doc_id)
+         ) STRICT, WITHOUT ROWID;
+         CREATE VIRTUAL TABLE IF NOT EXISTS _lilia_fts USING fts5(
+           collection UNINDEXED,
+           doc_id UNINDEXED,
+           content,
+           tokenize='unicode61'
+         );
          COMMIT;",
     )?;
     Ok(())
 }
 
+pub(crate) fn is_uri_or_memory(path: &Path) -> bool {
+    let s = path.to_str().unwrap_or("");
+    s == ":memory:" || s.starts_with("file:")
+}
+
 pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
+    if is_uri_or_memory(path) {
+        return Ok(());
+    }
     let Some(parent) = path.parent() else {
         return Err(LiliaError::new(
             ErrorCode::InvalidInput,
@@ -60,6 +102,9 @@ pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
 
 #[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 pub(crate) fn secure_database_file(path: &Path) -> Result<()> {
+    if is_uri_or_memory(path) {
+        return Ok(());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

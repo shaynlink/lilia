@@ -2,7 +2,7 @@ use crate::Result;
 
 /// Extension point for at-rest value encoding.
 pub trait ValueCodec: Send + Sync + std::fmt::Debug {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 
     /// Encode plaintext before persistence.
     ///
@@ -21,7 +21,8 @@ pub trait ValueCodec: Send + Sync + std::fmt::Debug {
 pub struct IdentityCodec;
 
 impl ValueCodec for IdentityCodec {
-    fn name(&self) -> &'static str {
+    #[allow(clippy::unnecessary_literal_bound)]
+    fn name(&self) -> &str {
         "identity"
     }
 

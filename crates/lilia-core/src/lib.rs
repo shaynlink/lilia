@@ -5,4 +5,7 @@ mod version;
 
 pub use codec::{IdentityCodec, ValueCodec};
 pub use error::{ErrorCode, LiliaError, Result};
-pub use types::{BatchOperation, Durability, JsonEntry, KvEntry, MutationResult};
+pub use types::{
+    BatchOperation, DatabaseEvent, Direction, Durability, FtsHit, GraphEdge, GraphNode, JsonEntry,
+    KvEntry, MutationResult,
+};

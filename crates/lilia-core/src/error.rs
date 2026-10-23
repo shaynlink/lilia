@@ -69,11 +69,16 @@ impl From<rusqlite::Error> for LiliaError {
                     ErrorCode::Corrupt
                 }
                 rusqlite::ErrorCode::DiskFull => ErrorCode::DiskFull,
+                rusqlite::ErrorCode::OperationInterrupted => ErrorCode::Timeout,
                 _ => ErrorCode::Storage,
             },
             _ => ErrorCode::Storage,
         };
-        Self::new(code, error.to_string(), code == ErrorCode::Busy)
+        Self::new(
+            code,
+            error.to_string(),
+            code == ErrorCode::Busy || code == ErrorCode::Timeout,
+        )
     }
 }
 

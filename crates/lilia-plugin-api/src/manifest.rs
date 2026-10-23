@@ -86,12 +86,43 @@ pub const fn host_target() -> &'static str {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+pub struct CodecDescriptorV1 {
+    pub name: *const c_char,
+    pub init: Option<unsafe extern "C" fn(key: *const u8, key_len: usize) -> i32>,
+    pub encode: Option<
+        unsafe extern "C" fn(
+            input: *const u8,
+            input_len: usize,
+            out: *mut u8,
+            out_cap: usize,
+            out_len: *mut usize,
+        ) -> i32,
+    >,
+    pub decode: Option<
+        unsafe extern "C" fn(
+            input: *const u8,
+            input_len: usize,
+            out: *mut u8,
+            out_cap: usize,
+            out_len: *mut usize,
+        ) -> i32,
+    >,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct PluginDescriptorV1 {
     pub abi_major: u16,
     pub abi_minor: u16,
     pub capabilities: u64,
     pub name: *const c_char,
+    pub codec: *const CodecDescriptorV1,
 }
+
+unsafe impl Send for CodecDescriptorV1 {}
+unsafe impl Sync for CodecDescriptorV1 {}
+unsafe impl Send for PluginDescriptorV1 {}
+unsafe impl Sync for PluginDescriptorV1 {}
 
 impl PluginDescriptorV1 {
     pub const fn new(name: *const c_char, capabilities: u64) -> Self {
@@ -100,6 +131,21 @@ impl PluginDescriptorV1 {
             abi_minor: ABI_MINOR,
             capabilities,
             name,
+            codec: std::ptr::null(),
+        }
+    }
+
+    pub const fn with_codec(
+        name: *const c_char,
+        capabilities: u64,
+        codec: *const CodecDescriptorV1,
+    ) -> Self {
+        Self {
+            abi_major: ABI_MAJOR,
+            abi_minor: ABI_MINOR,
+            capabilities,
+            name,
+            codec,
         }
     }
 }

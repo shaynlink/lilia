@@ -1,0 +1,14 @@
+{
+  "name": "lilia-graph",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "crates/lilia-graph/src",
+  "targets": {
+    "build": { "executor": "nx:run-commands", "options": { "command": "cargo build -p lilia-graph" } },
+    "test": { "executor": "nx:run-commands", "options": { "command": "cargo test -p lilia-graph" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "cargo clippy -p lilia-graph --all-targets -- -D warnings" } },
+    "bench": { "executor": "nx:run-commands", "options": { "command": "cargo bench -p lilia-graph --no-run" } },
+    "package": { "executor": "nx:run-commands", "options": { "command": "cargo package -p lilia-graph --allow-dirty --no-verify" } }
+  },
+  "tags": ["scope:graph", "type:library", "lang:rust"]
+}

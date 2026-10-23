@@ -1,5 +1,7 @@
 mod checkpoint;
 mod engine;
+mod fts;
+mod graph;
 mod json;
 mod kv;
 mod lifecycle;

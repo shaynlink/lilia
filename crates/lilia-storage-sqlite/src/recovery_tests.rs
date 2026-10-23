@@ -17,7 +17,7 @@ fn mutations(id: &str, value: u8) -> [BatchOperation; 2] {
         BatchOperation::JsonPut {
             space: "recovery".into(),
             id: id.into(),
-            value: serde_json::json!({"value": value}),
+            value: serde_json::json!({ "value": value }),
             if_version: None,
         },
     ]
@@ -50,7 +50,7 @@ fn crash_writer_child() {
             .iter()
             .chain(mutations("partial", 99).iter())
         {
-            apply(&transaction, operation).unwrap();
+            apply(&transaction, operation, &lilia_core::IdentityCodec).unwrap();
         }
         // Force dirty transaction pages into WAL without committing them.
         transaction.cache_flush().unwrap();
@@ -110,7 +110,7 @@ fn killed_writer_recovers_confirmed_multimodel_commits() {
             assert_eq!(kv.value, vec![id; 4096]);
             assert_eq!(kv.version, 1);
             let json = database.json_get("recovery", &key).unwrap().unwrap();
-            assert_eq!(json.value, serde_json::json!({"value": id}));
+            assert_eq!(json.value, serde_json::json!({ "value": id }));
             assert_eq!(json.version, 1);
         }
         assert!(database.kv_get("recovery", b"partial").unwrap().is_none());

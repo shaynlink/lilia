@@ -1,0 +1,27 @@
+[package]
+name = "lilia-plugin-codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
+hex.workspace = true
+lilia-plugin-api = { path = "../../crates/lilia-plugin-api" }
+rand.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+lilia-core = { path = "../../crates/lilia-core" }
+lilia-storage-sqlite = { path = "../../crates/lilia-storage-sqlite" }
+rusqlite.workspace = true
+serde_json.workspace = true
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

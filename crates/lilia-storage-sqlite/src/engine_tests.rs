@@ -19,7 +19,7 @@ fn readers_continue_and_expired_queued_batch_never_mutates() {
     database.batch(&[put(1)]).unwrap();
     let mut writer = database.lock_writer().unwrap();
     let transaction = writer.transaction().unwrap();
-    apply(&transaction, &put(2)).unwrap();
+    apply(&transaction, &put(2), &lilia_core::IdentityCodec).unwrap();
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| database.kv_get("queue", b"key").unwrap().unwrap());
         assert_eq!(reader.join().unwrap().value, vec![1]);
@@ -177,4 +177,59 @@ fn close_drains_readers_and_tolerates_external_wal_snapshots() {
     external.execute_batch("ROLLBACK").unwrap();
     let reopened = Database::open(DatabaseOptions::durable(&path)).unwrap();
     assert!(reopened.integrity_check().unwrap());
+}
+
+#[test]
+fn in_memory_database_executes_batches_and_queries() {
+    let database = Database::open(DatabaseOptions::in_memory()).unwrap();
+    database.batch(&[put(42)]).unwrap();
+    let entry = database.kv_get("queue", b"key").unwrap().unwrap();
+    assert_eq!(entry.value, vec![42]);
+    assert!(database.quick_check().unwrap());
+    assert!(database.integrity_check().unwrap());
+    database.close(Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn defensive_mode_rejects_direct_schema_writes() {
+    let database = Database::open(DatabaseOptions::in_memory()).unwrap();
+    let writer = database.lock_writer().unwrap();
+    let err = writer
+        .execute(
+            "UPDATE sqlite_schema SET sql = 'corrupt' WHERE name = '_lilia_kv'",
+            [],
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("may not be modified")
+            || err.to_string().contains("not authorized")
+    );
+}
+
+#[test]
+fn deadline_watchdog_interrupts_active_batch_and_rolls_back() {
+    let database = Database::open(DatabaseOptions::in_memory()).unwrap();
+    database.batch(&[put(1)]).unwrap();
+
+    let ops: Vec<BatchOperation> = (0..1000)
+        .map(|i| BatchOperation::KvSet {
+            namespace: "slow".into(),
+            key: format!("k{i}").into_bytes(),
+            value: vec![0u8; 10_000],
+            if_version: None,
+            expires_at_ms: None,
+        })
+        .collect();
+
+    let err = database
+        .batch_with_deadline(&ops, Some(Instant::now() + Duration::from_nanos(1)))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout);
+    assert!(err.retryable);
+
+    assert_eq!(
+        database.kv_get("queue", b"key").unwrap().unwrap().value,
+        vec![1]
+    );
+    assert!(database.quick_check().unwrap());
 }
