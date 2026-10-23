@@ -341,6 +341,7 @@ fn operation_name(operation: &Operation) -> &'static str {
         Operation::JsonGet { .. } => "json_get",
         Operation::JsonScan { .. } => "json_scan",
         Operation::Batch { .. } => "batch",
+        Operation::SqlQuery { .. } => "sql_query",
     }
 }
 
@@ -350,7 +351,7 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
             ResponseValue::Handshake {
                 major: PROTOCOL_MAJOR,
                 minor: PROTOCOL_MINOR,
-                capabilities: vec!["kv".into(), "json".into(), "batch".into()],
+                capabilities: vec!["kv".into(), "json".into(), "batch".into(), "sql".into()],
             }
         }
         Operation::Handshake { .. } => {
@@ -381,5 +382,8 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
             limit,
         } => ResponseValue::JsonPage(database.json_scan(&space, after.as_deref(), limit)?),
         Operation::Batch { operations } => ResponseValue::Mutations(database.batch(&operations)?),
+        Operation::SqlQuery { sql, params } => {
+            ResponseValue::Sql(database.sql_query(&sql, &params)?)
+        }
     })
 }

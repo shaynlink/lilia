@@ -55,6 +55,11 @@ pub(crate) enum Command {
     Batch {
         file: PathBuf,
     },
+    Sql {
+        query: String,
+        #[arg(long = "param")]
+        params: Vec<String>,
+    },
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,

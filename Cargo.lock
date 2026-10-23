@@ -931,6 +931,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lilia-plugin-sql"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "lilia-plugin-api",
+]
+
+[[package]]
 name = "lilia-protocol"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -949,6 +956,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "base64",
  "criterion",
+ "hex",
  "lilia-core",
  "rusqlite",
  "serde",

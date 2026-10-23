@@ -46,6 +46,14 @@ pub(crate) fn execute(
             let operations: Vec<BatchOperation> = serde_json::from_slice(&fs::read(file)?)?;
             serde_json::to_value(database.batch(&operations)?)?
         }
+        Command::Sql { query, params } => {
+            let json_params: Vec<Value> = params
+                .iter()
+                .map(|p| serde_json::from_str(p).unwrap_or_else(|_| Value::String(p.clone())))
+                .collect();
+            let result = database.sql_query(&query, &json_params)?;
+            serde_json::to_value(result)?
+        }
         Command::Plugin { .. } | Command::Daemon { .. } => unreachable!(),
     })
 }
@@ -267,5 +275,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(del[0]["deleted"], true);
+    }
+
+    #[test]
+    fn sql_command_execution() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cli_sql.lilia");
+
+        let init = execute(Command::Init, &db_path, None).unwrap();
+        assert_eq!(init["ok"], true);
+
+        // Put a document
+        let put = execute(
+            Command::Json {
+                command: JsonCommand::Put {
+                    space: "users".into(),
+                    id: "bob".into(),
+                    value: "{\"name\":\"Bob\",\"score\":99}".into(),
+                    if_version: None,
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+        assert_eq!(put[0]["version"], "1");
+
+        // Query via SQL
+        let sql_res = execute(
+            Command::Sql {
+                query: "SELECT id, json_extract(value, '$.score') as score FROM lilia_json WHERE space = 'users'".into(),
+                params: vec![],
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(sql_res["columns"], json!(["id", "score"]));
+        assert_eq!(sql_res["rows"], json!([["bob", 99]]));
     }
 }

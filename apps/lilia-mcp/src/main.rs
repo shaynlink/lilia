@@ -123,7 +123,16 @@ fn call_tool(
         )
     })?;
     match name {
-        "lilia_schema" => Ok(json!({"models": ["kv", "json"], "database": alias})),
+        "lilia_schema" => Ok(json!({"models": ["kv", "json", "sql"], "database": alias})),
+        "lilia_sql_query" => {
+            let sql = required_str(args, "sql")?;
+            let params: Vec<Value> = args
+                .get("params")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            serde_json::to_value(database.sql_query(sql, &params)?).map_err(json_error)
+        }
         "lilia_kv_get" => {
             let key = decode_base64(required_str(args, "key")?)?;
             serde_json::to_value(database.kv_get(required_str(args, "namespace")?, &key)?)
@@ -221,6 +230,15 @@ fn tool_definitions() -> Vec<Value> {
             json!({"database": string()}),
             &["database"],
         ),
+        tool(
+            "lilia_sql_query",
+            json!({
+                "database": string(),
+                "sql": {"type": "string", "description": "SQL query or mutation to execute against LiliaDB views or tables"},
+                "params": {"type": "array", "description": "Optional positional query parameters (?1, ?2...)", "items": {}}
+            }),
+            &["database", "sql"],
+        ),
     ]
 }
 
@@ -295,6 +313,39 @@ mod tests {
         assert!(names.contains(&"lilia_backup"));
         assert!(names.contains(&"lilia_integrity_check"));
         assert!(names.contains(&"lilia_checkpoint_stats"));
+        assert!(names.contains(&"lilia_sql_query"));
+    }
+
+    #[test]
+    fn call_sql_tool() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.lilia");
+        let database = Database::open(DatabaseOptions::durable(&path)).unwrap();
+        database
+            .batch(&[BatchOperation::JsonPut {
+                space: "users".into(),
+                id: "alice".into(),
+                value: json!({"name": "Alice", "role": "admin"}),
+                if_version: None,
+            }])
+            .unwrap();
+        let mut databases = HashMap::new();
+        databases.insert("demo".to_string(), database);
+
+        let result = call_tool(
+            &databases,
+            "lilia_sql_query",
+            &json!({
+                "database": "demo",
+                "sql": "SELECT id, json_extract(value, '$.role') AS role FROM lilia_json WHERE space = ?1",
+                "params": ["users"]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(result["columns"], json!(["id", "role"]));
+        assert_eq!(result["rows"], json!([["alice", "admin"]]));
+        assert_eq!(result["rows_affected"], 0);
     }
 
     #[test]

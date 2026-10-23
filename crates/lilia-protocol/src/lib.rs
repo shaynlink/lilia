@@ -52,6 +52,10 @@ pub enum Operation {
     Batch {
         operations: Vec<BatchOperation>,
     },
+    SqlQuery {
+        sql: String,
+        params: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +80,7 @@ pub enum ResponseValue {
     Json(Option<JsonEntry>),
     JsonPage(Vec<JsonEntry>),
     Mutations(Vec<MutationResult>),
+    Sql(lilia_core::SqlQueryResult),
 }
 
 /// Decode one size-prefixed `MessagePack` frame.
