@@ -170,3 +170,10 @@ pub enum DatabaseEvent {
         deleted: bool,
     },
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlQueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Value>>,
+    pub rows_affected: u64,
+}

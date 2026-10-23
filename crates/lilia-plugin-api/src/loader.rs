@@ -75,6 +75,11 @@ pub unsafe fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginApiError> {
                 "plugin claims codec capability but codec descriptor is null".into(),
             ));
         }
+        if descriptor.capabilities & crate::Capability::Sql.bit() != 0 && descriptor.sql.is_null() {
+            return Err(PluginApiError::Invalid(
+                "plugin claims sql capability but sql descriptor is null".into(),
+            ));
+        }
         return Ok(LoadedPlugin {
             descriptor,
             name,
@@ -138,6 +143,11 @@ fn validate_descriptor(
             ));
         }
     }
+    if manifest.capabilities.contains(&crate::Capability::Sql) && descriptor.sql.is_null() {
+        return Err(PluginApiError::Invalid(
+            "plugin declares sql capability but descriptor.sql is null".into(),
+        ));
+    }
     Ok(name)
 }
 
@@ -162,7 +172,69 @@ impl LoadedPlugin {
             _library: std::sync::Arc::clone(&self._library),
         })
     }
+
+    #[must_use]
+    pub fn sql(&self) -> Option<PluginSql> {
+        if self.descriptor.sql.is_null() {
+            return None;
+        }
+        let desc = unsafe { *self.descriptor.sql };
+        let sql_name = if desc.name.is_null() {
+            self.name.clone()
+        } else {
+            unsafe { CStr::from_ptr(desc.name) }
+                .to_str()
+                .unwrap_or(&self.name)
+                .to_owned()
+        };
+        Some(PluginSql {
+            name: sql_name,
+            descriptor: desc,
+            _library: std::sync::Arc::clone(&self._library),
+        })
+    }
 }
+
+#[derive(Clone)]
+pub struct PluginSql {
+    name: String,
+    descriptor: crate::manifest::SqlDescriptorV1,
+    _library: std::sync::Arc<Library>,
+}
+
+impl PluginSql {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn validate_query(&self, query: &str) -> Result<(), PluginApiError> {
+        if let Some(validate_fn) = self.descriptor.validate_query {
+            let c_query = std::ffi::CString::new(query).map_err(|_| {
+                PluginApiError::Invalid("SQL query contains interior null byte".into())
+            })?;
+            let code = unsafe { validate_fn(c_query.as_ptr()) };
+            if code != 0 {
+                return Err(PluginApiError::Invalid(format!(
+                    "SQL query validation rejected with code {code}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for PluginSql {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PluginSql")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+unsafe impl Send for PluginSql {}
+unsafe impl Sync for PluginSql {}
 
 #[derive(Clone)]
 pub struct PluginCodec {
@@ -367,6 +439,37 @@ mod tests {
             NAME.as_ptr().cast::<c_char>(),
             Capability::Codec.bit(),
             &CODEC_DESC,
+        );
+        assert_eq!(
+            validate_descriptor(&descriptor, &man).expect("valid descriptor"),
+            "trusted-plugin"
+        );
+    }
+
+    #[test]
+    fn rejects_sql_capability_when_sql_descriptor_is_null() {
+        let mut man = manifest();
+        man.capabilities = vec![Capability::Sql];
+        let descriptor =
+            PluginDescriptorV1::new(NAME.as_ptr().cast::<c_char>(), Capability::Sql.bit());
+        let error =
+            validate_descriptor(&descriptor, &man).expect_err("must reject null sql descriptor");
+        assert!(error.to_string().contains("sql"));
+    }
+
+    #[test]
+    fn accepts_sql_descriptor_when_capability_is_set() {
+        let mut man = manifest();
+        man.capabilities = vec![Capability::Sql];
+        static SQL_DESC: crate::manifest::SqlDescriptorV1 = crate::manifest::SqlDescriptorV1 {
+            name: NAME.as_ptr().cast::<c_char>(),
+            init: None,
+            validate_query: None,
+        };
+        let descriptor = PluginDescriptorV1::with_sql(
+            NAME.as_ptr().cast::<c_char>(),
+            Capability::Sql.bit(),
+            &SQL_DESC,
         );
         assert_eq!(
             validate_descriptor(&descriptor, &man).expect("valid descriptor"),
