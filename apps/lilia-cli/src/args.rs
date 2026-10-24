@@ -166,8 +166,57 @@ pub(crate) enum JsonCommand {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CapabilityArg {
+    Kv,
+    Json,
+    Sql,
+    Document,
+    Graph,
+    Codec,
+}
+
+impl From<CapabilityArg> for lilia_plugin_api::Capability {
+    fn from(arg: CapabilityArg) -> Self {
+        match arg {
+            CapabilityArg::Kv => Self::Kv,
+            CapabilityArg::Json => Self::Json,
+            CapabilityArg::Sql => Self::Sql,
+            CapabilityArg::Document => Self::Document,
+            CapabilityArg::Graph => Self::Graph,
+            CapabilityArg::Codec => Self::Codec,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum PluginCommand {
+    Keygen {
+        #[arg(long, default_value = ".")]
+        out_dir: PathBuf,
+        #[arg(long, default_value = "plugin-signer")]
+        name: String,
+        #[arg(long)]
+        force: bool,
+    },
+    Pack {
+        library: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long = "capability", value_enum)]
+        capabilities: Vec<CapabilityArg>,
+        #[arg(long)]
+        engine_requirement: Option<String>,
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+    },
+    Sign {
+        package: PathBuf,
+        #[arg(long)]
+        key: String,
+    },
     Trust {
         #[command(subcommand)]
         command: TrustCommand,
@@ -186,6 +235,8 @@ pub(crate) enum PluginCommand {
         package: PathBuf,
         #[arg(long)]
         root: Option<PathBuf>,
+        #[arg(long)]
+        force: bool,
         #[arg(long = "trusted-key")]
         trusted_keys: Vec<String>,
         #[arg(long)]

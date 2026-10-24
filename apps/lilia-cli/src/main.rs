@@ -21,7 +21,7 @@ fn main() {
                 } else {
                     lilia_core::ErrorCode::Storage
                 };
-                lilia_core::LiliaError::new(code, "command failed", false)
+                lilia_core::LiliaError::new(code, error.to_string(), false)
             });
         let payload = serde_json::to_string(&json!({"ok": false, "error": structured}))
             .unwrap_or_else(|_| "{\"ok\":false}".into());
@@ -58,6 +58,31 @@ fn print_value(output: Output, value: &serde_json::Value) -> anyhow::Result<()> 
                     print_table(&col_names, rows);
                     return Ok(());
                 }
+            } else if let Some(items) = value.as_array() {
+                if items.is_empty() {
+                    println!("(empty list)");
+                    return Ok(());
+                }
+                if let Some(first_obj) = items.first().and_then(|item| item.as_object()) {
+                    let cols: Vec<String> = first_obj.keys().cloned().collect();
+                    let rows: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|item| {
+                            let obj = item.as_object();
+                            let row: Vec<serde_json::Value> = cols
+                                .iter()
+                                .map(|col| {
+                                    obj.and_then(|o| o.get(col))
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null)
+                                })
+                                .collect();
+                            serde_json::Value::Array(row)
+                        })
+                        .collect();
+                    print_table(&cols, &rows);
+                    return Ok(());
+                }
             }
             println!("{}", serde_json::to_string_pretty(value)?);
         }
@@ -78,6 +103,11 @@ fn print_value(output: Output, value: &serde_json::Value) -> anyhow::Result<()> 
                         }
                         println!("{}", serde_json::to_string(&map)?);
                     }
+                }
+                return Ok(());
+            } else if let Some(items) = value.as_array() {
+                for item in items {
+                    println!("{}", serde_json::to_string(item)?);
                 }
                 return Ok(());
             }

@@ -9,6 +9,27 @@ use base64::Engine;
 
 use crate::args::{Command, Encoding, JsonCommand, KvCommand};
 
+pub(crate) fn resolve_plugin_path(plugin: &Path) -> anyhow::Result<std::path::PathBuf> {
+    if plugin.exists() {
+        if plugin.join("package").join("manifest.json").is_file() {
+            return Ok(plugin.join("package"));
+        }
+        return Ok(plugin.to_path_buf());
+    }
+
+    let query = plugin.to_str().unwrap_or_default();
+    if let Ok(root) = lilia_plugin_api::default_plugin_root() {
+        if let Ok(Some(installed)) = lilia_plugin_api::find_installed(&root, query) {
+            return Ok(installed.package_path);
+        }
+    }
+
+    anyhow::bail!(
+        "plugin `{}` not found as a file or directory, and not installed in default plugin store",
+        plugin.display()
+    );
+}
+
 #[allow(unsafe_code)]
 pub(crate) fn execute(
     command: Command,
@@ -16,10 +37,15 @@ pub(crate) fn execute(
     plugin: Option<&Path>,
 ) -> anyhow::Result<Value> {
     let mut options = DatabaseOptions::durable(path);
-    let _loaded = if let Some(plugin_path) = plugin {
-        let loaded = unsafe { lilia_plugin_api::load_plugin(plugin_path)? };
+    let mut sql_plugin = None;
+    let _loaded = if let Some(plugin_arg) = plugin {
+        let plugin_path = resolve_plugin_path(plugin_arg)?;
+        let loaded = unsafe { lilia_plugin_api::load_plugin(&plugin_path)? };
         if let Some(codec) = loaded.codec() {
             options = options.with_codec(std::sync::Arc::new(codec));
+        }
+        if let Some(sql) = loaded.sql() {
+            sql_plugin = Some(sql);
         }
         Some(loaded)
     } else {
@@ -47,6 +73,9 @@ pub(crate) fn execute(
             serde_json::to_value(database.batch(&operations)?)?
         }
         Command::Sql { query, params } => {
+            if let Some(sql) = &sql_plugin {
+                sql.validate_query(&query)?;
+            }
             let json_params: Vec<Value> = params
                 .iter()
                 .map(|p| serde_json::from_str(p).unwrap_or_else(|_| Value::String(p.clone())))
@@ -314,5 +343,29 @@ mod tests {
 
         assert_eq!(sql_res["columns"], json!(["id", "score"]));
         assert_eq!(sql_res["rows"], json!([["bob", 99]]));
+    }
+
+    #[test]
+    fn resolve_plugin_path_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let direct_file = dir.path().join("libplugin.dylib");
+        std::fs::write(&direct_file, b"content").unwrap();
+
+        // 1. Existing file resolves directly
+        let resolved = resolve_plugin_path(&direct_file).unwrap();
+        assert_eq!(resolved, direct_file);
+
+        // 2. Directory with package/manifest.json resolves to package subdir
+        let pkg_dir = dir.path().join("my-plugin");
+        let inner_pkg = pkg_dir.join("package");
+        std::fs::create_dir_all(&inner_pkg).unwrap();
+        std::fs::write(inner_pkg.join("manifest.json"), b"{}").unwrap();
+        let resolved_pkg = resolve_plugin_path(&pkg_dir).unwrap();
+        assert_eq!(resolved_pkg, inner_pkg);
+
+        // 3. Non-existent path returns descriptive error
+        let err =
+            resolve_plugin_path(Path::new("definitely-nonexistent-plugin-12345")).unwrap_err();
+        assert!(err.to_string().contains("not found as a file or directory"));
     }
 }
