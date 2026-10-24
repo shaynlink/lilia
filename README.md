@@ -20,6 +20,7 @@ pnpm lilia -- --database ./demo.lilia json put users ada '{"name":"Ada"}' --outp
 pnpm lilia -- --database ./demo.lilia json get users ada --output json
 pnpm lilia -- --database ./demo.lilia sql "SELECT id, json_extract(value, '$.name') AS name FROM lilia_json WHERE space = 'users'"
 pnpm lilia -- --database ./demo.lilia backup ./snapshots/demo.lilia --output json
+pnpm lilia -- plugin list
 ```
 
 Run the local daemon on Unix in a new private directory:

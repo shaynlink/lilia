@@ -17,8 +17,8 @@ mitigation when available.
 - MCP can access only database aliases explicitly declared at startup.
 - Native plugins execute with full process privileges and must be signed by a trusted key.
 - Logs and errors must not include stored values, daemon tokens, or signing private keys.
-- LiliaDB does not provide encryption at rest in `0.1`; use encrypted storage until the codec plugin
-  is available.
+- Pluggable encryption at rest is provided by `lilia-plugin-codec` (AES-256-GCM authenticated
+  encryption for KV and JSON values).
 
 Before production use, keep dependencies current, verify plugin signatures, back up with a
 checkpoint-aware SQLite backup, and never place a WAL database on a network filesystem.
