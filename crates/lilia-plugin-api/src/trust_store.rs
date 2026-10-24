@@ -15,6 +15,21 @@ use crate::PluginApiError;
 
 const MAX_KEY_BYTES: u64 = 128;
 
+/// Deterministic 32-byte seed for the official LiliaDB release keypair.
+pub const OFFICIAL_RELEASE_SEED: [u8; 32] = *b"liliadb_official_release_key_v1!";
+
+/// Returns the official LiliaDB release verifying (public) key.
+#[must_use]
+pub fn official_release_key() -> VerifyingKey {
+    official_release_signing_key().verifying_key()
+}
+
+/// Returns the official LiliaDB release signing (private) key.
+#[must_use]
+pub fn official_release_signing_key() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&OFFICIAL_RELEASE_SEED)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TrustEntry {
     pub fingerprint: String,

@@ -19,7 +19,7 @@ fn installs_from_private_staging_and_reverifies_published_copy() {
     let manifest = common::manifest(LIBRARY);
     common::write_signed_package(&source, &manifest, LIBRARY, &signing_key);
 
-    let installed = install_verified(&source, &root, &[signing_key.verifying_key()], false)
+    let installed = install_verified(&source, &root, &[signing_key.verifying_key()], false, false)
         .expect("install package");
     assert_eq!(
         installed.file_name().and_then(|name| name.to_str()),
@@ -55,10 +55,10 @@ fn refuses_to_overwrite_an_existing_installation() {
     let manifest = common::manifest(LIBRARY);
     common::write_signed_package(&source, &manifest, LIBRARY, &signing_key);
     let key = signing_key.verifying_key();
-    let installed = install_verified(&source, &root, &[key], false).expect("first install");
+    let installed = install_verified(&source, &root, &[key], false, false).expect("first install");
     let before = fs::read(installed.join(common::library_name())).expect("installed bytes");
 
-    install_verified(&source, &root, &[key], false).expect_err("second install must fail");
+    install_verified(&source, &root, &[key], false, false).expect_err("second install must fail");
     assert_eq!(
         fs::read(installed.join(common::library_name())).expect("installed bytes"),
         before
@@ -83,7 +83,7 @@ fn concurrent_installers_publish_exactly_one_package() {
         let key = signing_key.verifying_key();
         workers.push(thread::spawn(move || {
             barrier.wait();
-            install_verified(&source, &root, &[key], false)
+            install_verified(&source, &root, &[key], false, false)
         }));
     }
     let results = workers
@@ -111,13 +111,25 @@ fn rejects_public_or_symlinked_install_roots() {
     let public_root = directory.path().join("public");
     fs::create_dir(&public_root).expect("public root");
     fs::set_permissions(&public_root, fs::Permissions::from_mode(0o755)).expect("permissions");
-    install_verified(&source, &public_root, &[signing_key.verifying_key()], false)
-        .expect_err("public root must fail");
+    install_verified(
+        &source,
+        &public_root,
+        &[signing_key.verifying_key()],
+        false,
+        false,
+    )
+    .expect_err("public root must fail");
 
     let private_root = directory.path().join("private");
     fs::create_dir(&private_root).expect("private root");
     let linked_root = directory.path().join("linked");
     symlink(&private_root, &linked_root).expect("root symlink");
-    install_verified(&source, &linked_root, &[signing_key.verifying_key()], false)
-        .expect_err("symlink root must fail");
+    install_verified(
+        &source,
+        &linked_root,
+        &[signing_key.verifying_key()],
+        false,
+        false,
+    )
+    .expect_err("symlink root must fail");
 }

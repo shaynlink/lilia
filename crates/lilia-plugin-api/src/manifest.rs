@@ -84,6 +84,18 @@ pub const fn host_target() -> &'static str {
     }
 }
 
+/// Expected dynamic library file extension for the current host platform (e.g. "dylib", "so", "dll").
+#[must_use]
+pub const fn platform_library_extension() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct CodecDescriptorV1 {
