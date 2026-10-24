@@ -113,7 +113,12 @@ fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::L
         .plugin_root
         .clone()
         .map_or_else(lilia_plugin_api::default_plugin_root, Ok)?;
-    let mut trusted_keys = lilia_plugin_api::TrustStore::open(&root)?.keys()?;
+    let mut trusted_keys = vec![lilia_plugin_api::official_release_key()];
+    if let Ok(store) = lilia_plugin_api::TrustStore::open(&root) {
+        if let Ok(keys) = store.keys() {
+            trusted_keys.extend(keys);
+        }
+    }
     trusted_keys.extend(
         arguments
             .trusted_keys
@@ -132,7 +137,25 @@ fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::L
         .plugins
         .iter()
         .map(|path| {
-            let canonical_plugin = path.canonicalize()?;
+            let resolved_path = if path.exists() {
+                if path.join("package").join("manifest.json").is_file() {
+                    path.join("package")
+                } else {
+                    path.clone()
+                }
+            } else if let Some(installed) =
+                lilia_plugin_api::find_installed(&root, path.to_str().unwrap_or_default())?
+            {
+                installed.package_path
+            } else {
+                anyhow::bail!(
+                    "plugin `{}` not found as a file or directory, and not installed in `{}`",
+                    path.display(),
+                    root.display()
+                );
+            };
+
+            let canonical_plugin = resolved_path.canonicalize()?;
             if !canonical_plugin.starts_with(&canonical_root) {
                 anyhow::bail!("plugin path is outside the authorized plugin root");
             }
