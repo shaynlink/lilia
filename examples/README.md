@@ -129,4 +129,36 @@ Demonstrates:
 cargo run --example sql -p lilia-storage-sqlite
 ```
 
+---
+
+## Python Examples (`packages/python`)
+
+Zero-dependency official Python SDK connecting to `lilia-daemon` over the local HTTP gateway.
+
+See [`examples/python/README.md`](file:///Users/shayn/Development/liliadb/examples/python/README.md) for full instructions.
+
+### 1. Basic Key/Value Operations (`01_kv_basic.py`)
+Demonstrates:
+- Connecting to `lilia-daemon` over HTTP with Bearer token authentication
+- Setting and retrieving Key/Value records
+- Optimistic Concurrency Control (`if_version`)
+- Key expiration with TTL (`expires_at_ms`)
+
+### 2. JSON Document Store & Scans (`02_json_documents.py`)
+Demonstrates:
+- Storing and retrieving structured JSON objects
+- Transparent keyset auto-pagination generators (`client.json.scan()`)
+- Multi-model atomic batch mutations
+
+### 3. Declarative SQL Analytics (`03_sql_analytics.py`)
+Demonstrates:
+- Executing SQL queries over `lilia_json`
+- Analytical aggregations and filtering
+- Extracting results with `to_dicts()`
+
+### 4. AI Agent Memory & Sessions (`04_ai_agent_memory.py`)
+Demonstrates:
+- Building a stateful memory and session layer for AI agents using KV facts and JSON conversation logs
+
+
 

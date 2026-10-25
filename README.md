@@ -23,13 +23,25 @@ pnpm lilia -- --database ./demo.lilia backup ./snapshots/demo.lilia --output jso
 pnpm lilia -- plugin list
 ```
 
-Run the local daemon on Unix in a new private directory:
+Run the local daemon on Unix in a new private directory with optional loopback HTTP REST gateway:
 
 ```sh
 cargo run -p lilia-daemon -- \
   --database ./lilia-local/demo.lilia \
   --endpoint ./lilia-local/demo.lilia.sock \
-  --token-file ./lilia-local/demo.lilia.token
+  --token-file ./lilia-local/demo.lilia.token \
+  --http-port 4444
+```
+
+Connect using the zero-dependency official Python SDK (`packages/python`):
+
+```python
+from liliadb import LiliaClient
+
+client = LiliaClient(endpoint="http://127.0.0.1:4444", token="...")
+client.json.put("users", "ada", {"name": "Ada Lovelace"})
+doc = client.json.get("users", "ada")
+print(doc.value)
 ```
 
 The daemon creates missing IPC directories with mode `0700`; an existing directory
@@ -57,10 +69,9 @@ cargo run -p lilia-mcp -- --database demo=./demo.lilia
 - `apps/` contains the CLI, local daemon, and MCP server.
 - `crates/` contains the engine, IPC protocol, plugin ABI, and Node native binding.
 - `plugins/` contains independently built native model plugins.
-- `packages/` contains published language SDKs.
+- `packages/` contains published language SDKs (`@liliadb/node` for Node.js, `liliadb` for Python).
 
-See [Architecture](docs/architecture.md), [plugin format](docs/plugins.md), and
-[security policy](SECURITY.md).
+See [Architecture](docs/architecture.md), [HTTP REST API](docs/http_api.md), [Python SDK](docs/python_sdk.md), [plugin format](docs/plugins.md), and [security policy](SECURITY.md).
 
 The native SDK selects one optional Node-API package for the current platform. Configure
 `busyTimeoutMs`, `writerQueueCapacity`, `readPoolSize`, and `checkpointPolicy` when tuning a local
