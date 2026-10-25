@@ -24,6 +24,8 @@ mod ipc_unix;
 #[cfg(windows)]
 mod ipc_windows;
 
+mod http;
+
 #[derive(Debug, Parser)]
 #[command(version, about = "LiliaDB local daemon")]
 struct Arguments {
@@ -44,6 +46,12 @@ struct Arguments {
     /// Explicitly enable development-only plugin policy exceptions.
     #[arg(long)]
     development: bool,
+    /// Optional port for local loopback HTTP REST gateway (127.0.0.1:<PORT>).
+    #[arg(long = "http-port")]
+    http_port: Option<u16>,
+    /// Optional custom socket address for local loopback HTTP REST gateway.
+    #[arg(long = "http-bind")]
+    http_bind: Option<std::net::SocketAddr>,
 }
 
 #[tokio::main]
@@ -79,6 +87,23 @@ async fn main() -> anyhow::Result<()> {
     let database = Arc::new(Database::open(options)?);
     let shutdown = Arc::new(Notify::new());
     info!(database = %arguments.database.display(), "daemon started");
+
+    let http_addr = resolve_http_bind(&arguments)?;
+    if let Some(addr) = http_addr {
+        let http_listener = tokio::net::TcpListener::bind(addr).await?;
+        info!(addr = %addr, "http gateway started");
+        let http_database = database.clone();
+        let http_token = token.clone();
+        let http_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                http::serve_http(http_listener, http_database, http_token, http_shutdown).await
+            {
+                tracing::error!(error = %e, "http gateway error");
+            }
+        });
+    }
+
     #[cfg(unix)]
     return serve(listener, database, token, shutdown).await;
     #[cfg(windows)]
@@ -91,6 +116,21 @@ async fn main() -> anyhow::Result<()> {
         shutdown,
     )
     .await
+}
+
+fn resolve_http_bind(arguments: &Arguments) -> anyhow::Result<Option<std::net::SocketAddr>> {
+    if let Some(addr) = arguments.http_bind {
+        if !addr.ip().is_loopback() && !arguments.development {
+            anyhow::bail!(
+                "HTTP gateway can only bind to loopback addresses (127.0.0.1 or ::1) unless in development mode"
+            );
+        }
+        return Ok(Some(addr));
+    }
+    if let Some(port) = arguments.http_port {
+        return Ok(Some(std::net::SocketAddr::from(([127, 0, 0, 1], port))));
+    }
+    Ok(None)
 }
 
 fn load_plugins(arguments: &Arguments) -> anyhow::Result<Vec<lilia_plugin_api::LoadedPlugin>> {

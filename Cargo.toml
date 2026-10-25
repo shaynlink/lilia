@@ -26,6 +26,7 @@ repository = "https://github.com/shaynlink/lilia"
 [workspace.dependencies]
 aes-gcm = "0.10.3"
 anyhow = "1.0.100"
+axum = "0.8.9"
 criterion = "0.7.0"
 base64 = "0.22.1"
 clap = { version = "4.5.51", features = ["derive"] }

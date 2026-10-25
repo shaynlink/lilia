@@ -15,6 +15,8 @@ fn unsigned_plugins_require_explicit_development_mode() {
         plugin_root: None,
         allow_unsigned_plugins: true,
         development: false,
+        http_port: None,
+        http_bind: None,
     };
     let error = load_plugins(&arguments).expect_err("unsigned mode must fail closed");
     assert!(error.to_string().contains("--development"));
@@ -31,6 +33,8 @@ fn production_rejects_plugin_root_and_inline_key_overrides() {
         plugin_root: Some(PathBuf::from("custom")),
         allow_unsigned_plugins: false,
         development: false,
+        http_port: None,
+        http_bind: None,
     };
     assert!(load_plugins(&arguments)
         .expect_err("root override must fail")
@@ -59,6 +63,8 @@ fn development_root_still_rejects_plugins_outside_it() {
         plugin_root: Some(root),
         allow_unsigned_plugins: true,
         development: true,
+        http_port: None,
+        http_bind: None,
     };
 
     assert!(load_plugins(&arguments)
@@ -289,4 +295,211 @@ fn request_expiring_in_worker_queue_never_mutates_database() {
             Ok(ResponseValue::Mutations(_))
         ));
     });
+}
+
+#[tokio::test]
+async fn http_gateway_health_is_unauthenticated() {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    let (_dir, db) = database();
+    let shutdown = Arc::new(Notify::new());
+    let state = http::HttpState {
+        database: db,
+        token: TOKEN.into(),
+        shutdown,
+    };
+    let app = http::router(state);
+
+    let req = axum::http::Request::builder()
+        .uri("/health")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "running");
+}
+
+#[tokio::test]
+async fn http_gateway_rejects_missing_or_bad_token() {
+    use tower::ServiceExt;
+
+    let (_dir, db) = database();
+    let shutdown = Arc::new(Notify::new());
+    let state = http::HttpState {
+        database: db,
+        token: TOKEN.into(),
+        shutdown,
+    };
+    let app = http::router(state.clone());
+
+    // 1. Missing Authorization header
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/kv/get")
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(r#"{"namespace":"test","key":"k"}"#))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+
+    // 2. Invalid Token
+    let app = http::router(state);
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/kv/get")
+        .header("Authorization", "Bearer wrong_token_value")
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(r#"{"namespace":"test","key":"k"}"#))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[allow(clippy::too_many_lines)]
+#[tokio::test]
+async fn http_gateway_kv_json_sql_lifecycle() {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    let (_dir, db) = database();
+    let shutdown = Arc::new(Notify::new());
+    let state = http::HttpState {
+        database: db.clone(),
+        token: TOKEN.into(),
+        shutdown: shutdown.clone(),
+    };
+
+    let send = |req: axum::http::Request<axum::body::Body>| {
+        let app = http::router(state.clone());
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    };
+
+    let auth_header = format!("Bearer {TOKEN}");
+
+    // 1. KV SET
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/kv/set")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"namespace":"users","key":"alice","value":"developer"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["version"], "1");
+
+    // 2. KV GET
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/kv/get")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"namespace":"users","key":"alice"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["entry"]["value"], "developer");
+    assert_eq!(body["entry"]["version"], "1");
+
+    // 3. JSON PUT
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/json/put")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"space":"profiles","id":"u1","value":{"name":"Alice","role":"admin"}}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["version"], "1");
+
+    // 4. JSON GET via Path
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v1/json/profiles/u1")
+        .header("Authorization", &auth_header)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["document"]["value"]["name"], "Alice");
+
+    // 4b. BATCH OPERATIONS
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/batch")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"operations":[{"type":"kv_set","namespace":"users","key":"bob","value":"tester"},{"type":"json_put","space":"profiles","id":"u2","value":{"name":"Bob"}}]}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["results"][0]["version"], "1");
+    assert_eq!(body["results"][1]["version"], "1");
+
+    // 5. SQL QUERY
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/sql")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"query":"SELECT id, json_extract(value, '$.name') as name FROM lilia_json WHERE space = 'profiles'"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["columns"], serde_json::json!(["id", "name"]));
+    assert_eq!(
+        body["rows"],
+        serde_json::json!([["u1", "Alice"], ["u2", "Bob"]])
+    );
+
+    // 6. DOCTOR
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v1/doctor")
+        .header("Authorization", &auth_header)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    // 7. SHUTDOWN
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/shutdown")
+        .header("Authorization", &auth_header)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
 }

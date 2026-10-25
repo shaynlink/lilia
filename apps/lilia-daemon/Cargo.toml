@@ -7,8 +7,11 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 base64.workspace = true
 clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 lilia-core = { path = "../../crates/lilia-core" }
@@ -27,7 +30,9 @@ rustix = { version = "1.1.4", features = ["process"] }
 tempfile = "3.27.0"
 
 [dev-dependencies]
+http-body-util = "0.1.2"
 tempfile = "3.27.0"
+tower = { version = "0.5.2", features = ["util"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
