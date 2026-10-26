@@ -5,7 +5,7 @@ use std::process::{Child, Command};
 const CHILD_PATH: &str = "LILIA_RECOVERY_TEST_PATH";
 const CHILD_PHASE: &str = "LILIA_RECOVERY_TEST_PHASE";
 
-fn mutations(id: &str, value: u8) -> [BatchOperation; 2] {
+fn mutations(id: &str, value: u8) -> [BatchOperation; 5] {
     [
         BatchOperation::KvSet {
             namespace: "recovery".into(),
@@ -19,6 +19,23 @@ fn mutations(id: &str, value: u8) -> [BatchOperation; 2] {
             id: id.into(),
             value: serde_json::json!({ "value": value }),
             if_version: None,
+        },
+        BatchOperation::GraphSetNode {
+            graph: "recovery".into(),
+            id: id.into(),
+            kind: "entity".into(),
+            metadata: serde_json::json!({ "value": value }),
+        },
+        BatchOperation::GraphAddEdge {
+            graph: "recovery".into(),
+            source: id.into(),
+            target: id.into(),
+            kind: "self".into(),
+        },
+        BatchOperation::FtsIndex {
+            collection: "recovery".into(),
+            doc_id: id.into(),
+            content: format!("Recovery document {id} content with token {value}"),
         },
     ]
 }
@@ -112,9 +129,25 @@ fn killed_writer_recovers_confirmed_multimodel_commits() {
             let json = database.json_get("recovery", &key).unwrap().unwrap();
             assert_eq!(json.value, serde_json::json!({ "value": id }));
             assert_eq!(json.version, 1);
+            let node = database.graph_get_node("recovery", &key).unwrap().unwrap();
+            assert_eq!(node.kind, "entity");
+            assert_eq!(node.metadata, serde_json::json!({ "value": id }));
+            let hits = database
+                .fts_search("recovery", &format!("token {id}"), 10)
+                .unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].doc_id, key);
         }
         assert!(database.kv_get("recovery", b"partial").unwrap().is_none());
         assert!(database.json_get("recovery", "partial").unwrap().is_none());
+        assert!(database
+            .graph_get_node("recovery", "partial")
+            .unwrap()
+            .is_none());
+        assert!(database
+            .fts_search("recovery", "partial", 10)
+            .unwrap()
+            .is_empty());
         assert!(database.integrity_check().unwrap());
         database.batch(&mutations("after-recovery", 8)).unwrap();
         database.close(Duration::from_secs(5)).unwrap();
@@ -165,6 +198,14 @@ fn page_quota_failure_rolls_back_batch_and_releases_writer() {
             .value,
         serde_json::json!({"value": 1})
     );
+    assert_eq!(
+        database
+            .graph_get_node("recovery", "confirmed")
+            .unwrap()
+            .unwrap()
+            .metadata,
+        serde_json::json!({"value": 1})
+    );
     assert!(database.kv_get("recovery", b"oversized").unwrap().is_none());
     database
         .lock_writer()
@@ -177,6 +218,10 @@ fn page_quota_failure_rolls_back_batch_and_releases_writer() {
     assert!(reopened.integrity_check().unwrap());
     assert!(reopened
         .json_get("recovery", "after-full")
+        .unwrap()
+        .is_some());
+    assert!(reopened
+        .graph_get_node("recovery", "after-full")
         .unwrap()
         .is_some());
 }
@@ -196,6 +241,14 @@ fn external_writer_lock_is_retryable_and_preserves_atomicity() {
     assert!(!error.request_id.is_nil());
     assert!(database.kv_get("recovery", b"locked").unwrap().is_none());
     assert!(database.json_get("recovery", "locked").unwrap().is_none());
+    assert!(database
+        .graph_get_node("recovery", "locked")
+        .unwrap()
+        .is_none());
+    assert!(database
+        .fts_search("recovery", "locked", 10)
+        .unwrap()
+        .is_empty());
     external.execute_batch("ROLLBACK").unwrap();
     database.batch(&mutations("locked", 1)).unwrap();
     assert!(database.integrity_check().unwrap());

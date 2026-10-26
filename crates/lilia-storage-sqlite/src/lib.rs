@@ -11,4 +11,6 @@ mod transaction;
 mod writer_queue;
 
 pub use checkpoint::CheckpointStats;
+#[doc(hidden)]
+pub use engine::WriterGuard;
 pub use engine::{CheckpointPolicy, Database, DatabaseOptions};

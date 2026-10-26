@@ -107,11 +107,18 @@ struct Resources {
     writer_queue: WriterQueue,
 }
 
-pub(crate) struct WriterGuard<'a> {
+#[doc(hidden)]
+pub struct WriterGuard<'a> {
     // Drop the connection lock before making the next FIFO permit available.
     connection: MutexGuard<'a, Option<Connection>>,
     _permit: Option<Permit<'a>>,
     _operation: Operation<'a>,
+}
+
+impl std::fmt::Debug for WriterGuard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriterGuard").finish_non_exhaustive()
+    }
 }
 
 impl Deref for WriterGuard<'_> {
@@ -540,7 +547,8 @@ impl Database {
         Ok(results)
     }
 
-    pub(crate) fn lock_writer(&self) -> Result<WriterGuard<'_>> {
+    #[doc(hidden)]
+    pub fn lock_writer(&self) -> Result<WriterGuard<'_>> {
         self.writer_lock(None)
     }
 
