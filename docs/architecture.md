@@ -158,9 +158,10 @@ also syncs the destination directory. A directory-sync failure can be reported
 after the complete snapshot has become visible.
 
 Existing parent-directory permissions are preserved; newly created directories
-are user-only on Unix. Destination parent directories must be trusted and must
-not be concurrently replaced by an untrusted process; this is not a sandboxed
-path API. Windows directory durability and ACL hardening remain separate work.
+and snapshot files are user-only on both Unix (0700/0600) and Windows (current-user-only
+protected DACL `O:{sid}D:P(A;OICI;FA;;;{sid})` for directories, `O:{sid}D:P(A;;FA;;;{sid})` for files).
+Destination parent directories must be trusted and must not be concurrently replaced by an untrusted
+process; this is not a sandboxed path API. Windows directory durability (metadata flush) remains separate work.
 
 ## Writer admission
 
