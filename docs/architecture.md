@@ -221,27 +221,44 @@ request, not completed cleanup. Runtime blocking work may delay process exit;
 abrupt signals and process kills are not a graceful-drain guarantee. Implicit Rust
 drop still performs synchronous resource cleanup without a caller timeout.
 
-## Recovery test coverage
+## Recovery and Chaos Resilience Guarantees
 
-Storage tests launch a child test process, pin a read snapshot, commit eight KV/JSON
-batches, and wait for an explicit acknowledgement before forcibly terminating the
-child. Two crash points are covered: after confirmed commits and after flushing
-uncommitted KV/JSON changes to WAL. Reopening must retain every confirmed value
-and version, discard the partial transaction, pass `integrity_check`, and accept
-new writes. The subprocess helper is marked ignored for direct test discovery but
-is explicitly launched twice by the parent test in normal `cargo test` runs.
+Storage resilience is tested against process crashes, power interruption simulations,
+torn WAL frames, frame checksum corruptions, and disk exhaustion (`ENOSPC`).
 
-Additional tests restrict the writer's SQLite `max_page_count` to produce
-`SQLITE_FULL`, verify `DISK_FULL` and whole-batch rollback, lift the quota and verify
-subsequent writes and reopening. An independent SQLite connection holds a writer
-lock to verify retryable `BUSY`. A deliberately damaged, closed database header
-must return non-retryable `CORRUPT` without reinitializing or rewriting the file.
-
-These are process-crash and logical-page-quota tests, not power-loss simulations
-or real filesystem ENOSPC/I/O fault injection. They do not exhaust crash timings,
-WAL corruption cases, or failures across all public transports. Those remain
-separate resilience work; a corrupt database is diagnosed, not automatically
-repaired.
+- **Multi-Model Crash Atomicity (`SIGKILL`)**:
+  Transactions execute atomically across all data models (KV, JSON, Graph nodes/edges, FTS).
+  Abrupt process termination (`SIGKILL`) while dirty uncommitted multi-model mutations are
+  flushed to WAL guarantees strict all-or-nothing rollback on reopen. No partial records,
+  orphaned graph edges, or unindexed search tokens are exposed. Confirmed commits preceding
+  the crash remain 100% durable.
+- **Torn WAL Writes & Power Loss Simulation**:
+  Simulating power failure during disk flush (partial WAL frame write, e.g. 512 bytes of a
+  4120-byte page frame) triggers SQLite's WAL recovery protocol on reopen. The torn frame is
+  discarded, all preceding valid commit frames are replayed, `integrity_check` passes, and
+  normal writes resume immediately.
+- **Corrupt Frame Checksum Rejection**:
+  Bit flips in WAL frame checksums (simulating torn sectors or storage corruption) are
+  detected by SQLite's running 64-bit frame checksum. Replay cleanly halts before the
+  corrupted frame, committing only validated prior frames and leaving the database consistent.
+- **Truncated WAL Headers**:
+  Interruption during WAL file initialization leaving a truncated header (< 32 bytes) is
+  detected on startup; the invalid WAL is discarded, falling back safely to the main database file.
+- **Disk Full (`ENOSPC`) & Self-Healing**:
+  When write operations exceed disk space or page quota, transactions fail immediately with
+  structured, non-retryable `ErrorCode::DiskFull`. The writer queue lock is cleanly released
+  (preventing writer lock starvation or mutex poisoning), concurrent readers continue operating
+  uninterrupted, and the database automatically heals and accepts new writes as soon as disk
+  space is restored without requiring a process restart.
+- **Backup Staging Isolation & Cleanup**:
+  Disk or permission failures during backup staging immediately clean up any temporary
+  `.lilia-backup-*` staging artifacts, leaving the source database fully operational.
+- **Physical Corruption Guard**:
+  Severe database file header corruption is diagnosed and rejected with non-retryable
+  `ErrorCode::Corrupt`. The engine never silently overwrites, reinitializes, or truncates
+  corrupted files.
+- **Stress Crash-Recovery Cycles**:
+  Iterative crash-recovery loops verify sustained stability through repeated abrupt terminations.
 
 ## Declarative SQL Querying & SQL Plugin
 
