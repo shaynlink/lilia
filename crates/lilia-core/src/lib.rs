@@ -9,3 +9,6 @@ pub use types::{
     BatchOperation, DatabaseEvent, Direction, Durability, FtsHit, GraphEdge, GraphNode, JsonEntry,
     KvEntry, MutationResult, SqlQueryResult,
 };
+
+#[cfg(windows)]
+pub mod windows_security;

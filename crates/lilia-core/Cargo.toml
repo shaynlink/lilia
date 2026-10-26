@@ -18,5 +18,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [lints]
 workspace = true
