@@ -349,6 +349,8 @@ impl Database {
             .prefix(".lilia-backup-")
             .tempdir_in(parent)
             .map_err(backup_io)?;
+        #[cfg(windows)]
+        lilia_core::windows_security::secure_directory(staging.path()).map_err(backup_io)?;
         let temporary = staging.path().join("snapshot.lilia");
         let mut output = Connection::open(&temporary)?;
         output.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;

@@ -103,16 +103,27 @@ pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
         builder.mode(0o700);
+        // Existing directories belong to the caller: never change their permissions.
+        builder
+            .create(parent)
+            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     }
-    // Existing directories belong to the caller: never change their permissions.
-    builder
-        .create(parent)
-        .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+    #[cfg(windows)]
+    {
+        lilia_core::windows_security::create_dir_all_secure(parent)
+            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        fs::create_dir_all(parent)
+            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+    }
     Ok(())
 }
 
-#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 pub(crate) fn secure_database_file(path: &Path) -> Result<()> {
     if is_uri_or_memory(path) {
         return Ok(());
@@ -123,7 +134,12 @@ pub(crate) fn secure_database_file(path: &Path) -> Result<()> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        lilia_core::windows_security::secure_file(path)
+            .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = path;
     Ok(())
 }

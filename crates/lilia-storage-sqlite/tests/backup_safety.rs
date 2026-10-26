@@ -88,3 +88,32 @@ fn parent_permissions_are_preserved_and_new_directories_are_private() {
         );
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_parent_permissions_are_preserved_and_new_directories_are_private() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open(DatabaseOptions::durable(dir.path().join("source.lilia"))).unwrap();
+    let destination = dir.path().join("new/nested/snapshot.lilia");
+    db.backup(&destination).unwrap();
+
+    let new_dir = dir.path().join("new");
+    let nested_dir = dir.path().join("new/nested");
+
+    assert!(new_dir.is_dir());
+    assert!(nested_dir.is_dir());
+    assert!(destination.is_file());
+
+    assert!(
+        lilia_core::windows_security::is_private_dacl(&new_dir).unwrap(),
+        "new directory must have private DACL"
+    );
+    assert!(
+        lilia_core::windows_security::is_private_dacl(&nested_dir).unwrap(),
+        "nested directory must have private DACL"
+    );
+    assert!(
+        lilia_core::windows_security::is_private_dacl(&destination).unwrap(),
+        "snapshot file must have private DACL"
+    );
+}
