@@ -47,6 +47,68 @@ jobs:
       - run: cargo test --workspace
       - run: pnpm nx run-many -t build,lint,test --all
 
+  compat-verify:
+    needs: verify
+    name: Cross-Runtime Compatibility Gate (Node, Bun, Deno)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Build local native addon and daemon
+        run: |
+          cargo build -p lilia-node-native -p lilia-daemon --release
+          pnpm install --frozen-lockfile
+          pnpm --filter @liliadb/node build
+          mkdir -p packages/node-linux-x64-gnu
+          cp target/release/liblilia_node_native.so packages/node-linux-x64-gnu/lilia_node_native.node
+      - name: Verify Node.js
+        run: node --test packages/node/dist/**/*.test.js
+      - name: Verify Bun
+        run: |
+          bun test packages/node/dist/database.test.js
+          bun test packages/node/tests/compat-bun.test.ts
+      - name: Verify Deno
+        run: deno test --allow-all packages/node/tests/compat-deno.test.ts
+
+  pypi:
+    needs: verify
+    name: Publish Python SDK to PyPI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - name: Build local daemon for Python tests
+        run: cargo build -p lilia-daemon
+      - name: Run Python test suite
+        run: PYTHONPATH=packages/python python -m unittest discover -s packages/python/tests -v
+      - name: Install packaging tools
+        run: python -m pip install --upgrade build twine
+      - name: Build sdist and wheel
+        run: python -m build packages/python
+      - name: Verify package distributions
+        run: twine check --strict packages/python/dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/python/dist/
+          skip-existing: true
+
   native:
     needs: verify
     strategy:
@@ -110,15 +172,20 @@ jobs:
           path: release/*
 
   publish:
-    needs: native
+    needs: [native, compat-verify, pypi]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
       - name: Checksums
         run: sha256sum release/* > release/SHA256SUMS
+      - name: Update Homebrew formula with release checksums
+        run: |
+          node tools/update-homebrew-formula.mjs --version "$GITHUB_REF_NAME" --dir release
+          cp Formula/liliadb.rb Formula/lilia.rb release/
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -126,7 +193,6 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.5.2
-      - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - name: Publish Platform Prebuilds
         env:
@@ -142,7 +208,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm --filter @liliadb/node publish --no-git-checks --access public --provenance
-      - name: Release archives
+      - name: Release archives and formulas
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

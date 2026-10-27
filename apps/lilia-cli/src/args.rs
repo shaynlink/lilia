@@ -64,6 +64,14 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: PluginCommand,
     },
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommand,
+    },
+    Fts {
+        #[command(subcommand)]
+        command: FtsCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -163,6 +171,73 @@ pub(crate) enum JsonCommand {
         after: Option<String>,
         #[arg(long, default_value_t = 100)]
         limit: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum DirectionArg {
+    #[default]
+    Outgoing,
+    Incoming,
+    Both,
+}
+
+impl From<DirectionArg> for lilia_core::Direction {
+    fn from(arg: DirectionArg) -> Self {
+        match arg {
+            DirectionArg::Outgoing => Self::Outgoing,
+            DirectionArg::Incoming => Self::Incoming,
+            DirectionArg::Both => Self::Both,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum GraphCommand {
+    Node {
+        graph: String,
+        id: String,
+        #[arg(long, default_value = "default")]
+        kind: String,
+        #[arg(long)]
+        metadata: Option<String>,
+    },
+    Edge {
+        graph: String,
+        source: String,
+        target: String,
+        #[arg(long, default_value = "edge")]
+        kind: String,
+    },
+    Neighbors {
+        graph: String,
+        node: String,
+        #[arg(long, default_value = "outgoing")]
+        direction: DirectionArg,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    Reach {
+        graph: String,
+        #[arg(required = true)]
+        start_nodes: Vec<String>,
+        #[arg(long, default_value = "outgoing")]
+        direction: DirectionArg,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum FtsCommand {
+    Search {
+        collection: String,
+        query: String,
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+    Index {
+        collection: String,
+        doc_id: String,
+        content: String,
     },
 }
 

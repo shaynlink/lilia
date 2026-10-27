@@ -957,10 +957,13 @@ dependencies = [
 name = "lilia-core"
 version = "0.1.0-alpha.2"
 dependencies = [
+ "aes-gcm",
+ "rand",
  "rusqlite",
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "uuid",
  "windows-sys",
@@ -975,6 +978,7 @@ dependencies = [
  "base64",
  "clap",
  "ed25519-dalek",
+ "futures-util",
  "hex",
  "http-body-util",
  "lilia-core",
@@ -1107,6 +1111,7 @@ name = "lilia-storage-sqlite"
 version = "0.1.0-alpha.2"
 dependencies = [
  "base64",
+ "clap",
  "criterion",
  "hex",
  "lilia-core",

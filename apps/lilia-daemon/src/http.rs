@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use lilia_core::{BatchOperation, ErrorCode, LiliaError};
+use futures_util::stream::Stream;
+use lilia_core::{BatchOperation, Direction, ErrorCode, LiliaError};
 use lilia_storage_sqlite::Database;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -96,6 +98,66 @@ pub struct JsonScanRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct GraphNodeRequest {
+    pub graph: String,
+    pub id: String,
+    #[serde(default = "default_node_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
+fn default_node_kind() -> String {
+    "default".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphEdgeRequest {
+    pub graph: String,
+    pub source: String,
+    pub target: String,
+    #[serde(default = "default_edge_kind")]
+    pub kind: String,
+}
+
+fn default_edge_kind() -> String {
+    "edge".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphNeighborsRequest {
+    pub graph: String,
+    pub node: String,
+    #[serde(default)]
+    pub direction: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphReachabilityRequest {
+    pub graph: String,
+    pub start_nodes: Vec<String>,
+    #[serde(default)]
+    pub direction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FtsIndexRequest {
+    pub collection: String,
+    pub doc_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FtsSearchRequest {
+    pub collection: String,
+    pub query: String,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HttpBatchOperation {
     KvSet {
@@ -131,6 +193,38 @@ pub enum HttpBatchOperation {
         id: String,
         #[serde(default)]
         if_version: Option<u64>,
+    },
+    GraphSetNode {
+        graph: String,
+        id: String,
+        kind: String,
+        #[serde(default)]
+        metadata: Option<Value>,
+    },
+    GraphDeleteNode {
+        graph: String,
+        id: String,
+    },
+    GraphAddEdge {
+        graph: String,
+        source: String,
+        target: String,
+        kind: String,
+    },
+    GraphRemoveEdge {
+        graph: String,
+        source: String,
+        target: String,
+        kind: String,
+    },
+    FtsIndex {
+        collection: String,
+        doc_id: String,
+        content: String,
+    },
+    FtsDelete {
+        collection: String,
+        doc_id: String,
     },
 }
 
@@ -226,6 +320,14 @@ async fn auth_middleware(
         } else {
             false
         }
+    } else if let Some(query) = request.uri().query() {
+        query.split('&').any(|pair| {
+            if let Some((k, v)) = pair.split_once('=') {
+                k == "token" && v.as_bytes().ct_eq(state.token.as_bytes()).into()
+            } else {
+                false
+            }
+        })
     } else {
         false
     };
@@ -585,6 +687,7 @@ async fn json_scan_handler(
 }
 
 // Batch Handler
+#[allow(clippy::too_many_lines)]
 async fn batch_handler(
     State(state): State<HttpState>,
     Json(payload): Json<BatchRequest>,
@@ -650,6 +753,62 @@ async fn batch_handler(
                     if_version,
                 });
             }
+            HttpBatchOperation::GraphSetNode {
+                graph,
+                id,
+                kind,
+                metadata,
+            } => {
+                ops.push(BatchOperation::GraphSetNode {
+                    graph,
+                    id,
+                    kind,
+                    metadata: metadata.unwrap_or_else(|| json!({})),
+                });
+            }
+            HttpBatchOperation::GraphDeleteNode { graph, id } => {
+                ops.push(BatchOperation::GraphDeleteNode { graph, id });
+            }
+            HttpBatchOperation::GraphAddEdge {
+                graph,
+                source,
+                target,
+                kind,
+            } => {
+                ops.push(BatchOperation::GraphAddEdge {
+                    graph,
+                    source,
+                    target,
+                    kind,
+                });
+            }
+            HttpBatchOperation::GraphRemoveEdge {
+                graph,
+                source,
+                target,
+                kind,
+            } => {
+                ops.push(BatchOperation::GraphRemoveEdge {
+                    graph,
+                    source,
+                    target,
+                    kind,
+                });
+            }
+            HttpBatchOperation::FtsIndex {
+                collection,
+                doc_id,
+                content,
+            } => {
+                ops.push(BatchOperation::FtsIndex {
+                    collection,
+                    doc_id,
+                    content,
+                });
+            }
+            HttpBatchOperation::FtsDelete { collection, doc_id } => {
+                ops.push(BatchOperation::FtsDelete { collection, doc_id });
+            }
         }
     }
 
@@ -706,6 +865,156 @@ async fn sql_handler(
     })))
 }
 
+fn parse_direction(dir: Option<&str>) -> Direction {
+    match dir {
+        Some("incoming") => Direction::Incoming,
+        Some("both") => Direction::Both,
+        _ => Direction::Outgoing,
+    }
+}
+
+// Graph Handlers
+async fn graph_node_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<GraphNodeRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let meta = payload.metadata.unwrap_or_else(|| json!({}));
+    tokio::task::spawn_blocking(move || {
+        db.graph_set_node(&payload.graph, &payload.id, &payload.kind, &meta)
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn graph_edge_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<GraphEdgeRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    tokio::task::spawn_blocking(move || {
+        db.graph_add_edge(
+            &payload.graph,
+            &payload.source,
+            &payload.target,
+            &payload.kind,
+        )
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn graph_neighbors_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<GraphNeighborsRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let direction = parse_direction(payload.direction.as_deref());
+    let neighbors = tokio::task::spawn_blocking(move || {
+        db.graph_neighbors(
+            &payload.graph,
+            &payload.node,
+            direction,
+            payload.kind.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true, "neighbors": neighbors })))
+}
+
+async fn graph_reachability_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<GraphReachabilityRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let direction = parse_direction(payload.direction.as_deref());
+    let reachable = tokio::task::spawn_blocking(move || {
+        db.graph_reachability(&payload.graph, &payload.start_nodes, direction)
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true, "reachable": reachable })))
+}
+
+// FTS Handlers
+async fn fts_index_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<FtsIndexRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    tokio::task::spawn_blocking(move || {
+        db.fts_index(&payload.collection, &payload.doc_id, &payload.content)
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn fts_search_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<FtsSearchRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let limit = payload.limit.unwrap_or(10);
+    let hits = tokio::task::spawn_blocking(move || {
+        db.fts_search(&payload.collection, &payload.query, limit)
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true, "hits": hits })))
+}
+
 // Doctor Handler
 async fn doctor_handler(
     State(state): State<HttpState>,
@@ -760,6 +1069,44 @@ async fn shutdown_handler(State(state): State<HttpState>) -> impl IntoResponse {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WatchParams {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub token: Option<String>,
+}
+
+async fn watch_handler(
+    State(state): State<HttpState>,
+    Query(params): Query<WatchParams>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.database.subscribe();
+    let filter = params.namespace;
+    let stream = futures_util::stream::unfold(rx, move |mut rx| {
+        let filter = filter.clone();
+        async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if event.matches_filter(filter.as_deref()) {
+                            if let Ok(json_str) = serde_json::to_string(&event) {
+                                let sse_event = Event::default().event("mutation").data(json_str);
+                                return Some((Ok(sse_event), rx));
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 pub fn router(state: HttpState) -> Router {
     let public_routes = Router::new().route("/health", get(health_handler));
 
@@ -775,6 +1122,14 @@ pub fn router(state: HttpState) -> Router {
         .route("/v1/json/put", post(json_put_handler))
         .route("/v1/json/delete", post(json_delete_handler))
         .route("/v1/json/scan", post(json_scan_handler))
+        // Graph
+        .route("/v1/graph/node", post(graph_node_handler))
+        .route("/v1/graph/edge", post(graph_edge_handler))
+        .route("/v1/graph/neighbors", post(graph_neighbors_handler))
+        .route("/v1/graph/reachability", post(graph_reachability_handler))
+        // FTS
+        .route("/v1/fts/index", post(fts_index_handler))
+        .route("/v1/fts/search", post(fts_search_handler))
         // Batch
         .route("/v1/batch", post(batch_handler))
         // SQL
@@ -783,6 +1138,8 @@ pub fn router(state: HttpState) -> Router {
         .route("/v1/doctor", get(doctor_handler))
         .route("/v1/backup", post(backup_handler))
         .route("/v1/shutdown", post(shutdown_handler))
+        // Watch (SSE Live CDC Events)
+        .route("/v1/watch", get(watch_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

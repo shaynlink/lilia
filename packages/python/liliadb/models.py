@@ -51,3 +51,34 @@ class BatchResult:
 
     version: Optional[str] = None
     deleted: bool = False
+
+
+@dataclass(frozen=True)
+class FtsHit:
+    """Represents a search match in a full-text search collection."""
+
+    collection: str
+    doc_id: str
+    snippet: str
+    rank: float
+
+
+@dataclass(frozen=True)
+class DatabaseEvent:
+    """Represents a change event emitted on data mutation (CDC)."""
+
+    type: str
+    namespace: Optional[str] = None
+    space: Optional[str] = None
+    graph: Optional[str] = None
+    collection: Optional[str] = None
+    key: Optional[str] = None
+    id: Optional[str] = None
+    doc_id: Optional[str] = None
+    source: Optional[str] = None
+    target: Optional[str] = None
+    kind: Optional[str] = None
+    version: Optional[str] = None
+    deleted: bool = False
+    raw: Optional[Dict[str, Any]] = None
+

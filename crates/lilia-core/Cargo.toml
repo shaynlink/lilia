@@ -11,10 +11,13 @@ default = []
 sqlite-errors = ["dep:rusqlite"]
 
 [dependencies]
+aes-gcm.workspace = true
+rand.workspace = true
 rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_bytes.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

@@ -6,6 +6,7 @@ from liliadb import (
     AuthenticationError,
     BatchResult,
     ConflictError,
+    FtsHit,
     InvalidInputError,
     JsonDocument,
     KvEntry,
@@ -18,6 +19,13 @@ from liliadb.errors import raise_for_status
 
 
 class TestModels(unittest.TestCase):
+    def test_fts_hit(self):
+        hit = FtsHit(collection="docs", doc_id="d1", snippet="sample snippet", rank=-1.25)
+        self.assertEqual(hit.collection, "docs")
+        self.assertEqual(hit.doc_id, "d1")
+        self.assertEqual(hit.snippet, "sample snippet")
+        self.assertEqual(hit.rank, -1.25)
+
     def test_kv_entry(self):
         entry = KvEntry(namespace="users", key="k1", value="v1", version="1", expires_at_ms=1000)
         self.assertEqual(entry.namespace, "users")

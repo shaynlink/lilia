@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use base64::Engine;
 
-use crate::args::{Command, Encoding, JsonCommand, KvCommand};
+use crate::args::{Command, Encoding, FtsCommand, GraphCommand, JsonCommand, KvCommand};
 
 pub(crate) fn resolve_plugin_path(plugin: &Path) -> anyhow::Result<std::path::PathBuf> {
     if plugin.exists() {
@@ -68,6 +68,8 @@ pub(crate) fn execute(
         }
         Command::Kv { command } => kv(&database, command)?,
         Command::Json { command } => json_model(&database, command)?,
+        Command::Graph { command } => graph(&database, command)?,
+        Command::Fts { command } => fts(&database, command)?,
         Command::Batch { file } => {
             let operations: Vec<BatchOperation> = serde_json::from_slice(&fs::read(file)?)?;
             serde_json::to_value(database.batch(&operations)?)?
@@ -216,6 +218,87 @@ fn json_model(database: &Database, command: JsonCommand) -> anyhow::Result<Value
     }
 }
 
+fn graph(database: &Database, command: GraphCommand) -> anyhow::Result<Value> {
+    match command {
+        GraphCommand::Node {
+            graph,
+            id,
+            kind,
+            metadata,
+        } => {
+            let meta_val = match metadata {
+                Some(s) => serde_json::from_str(&s)?,
+                None => json!({}),
+            };
+            database.graph_set_node(&graph, &id, &kind, &meta_val)?;
+            Ok(json!({
+                "ok": true,
+                "graph": graph,
+                "id": id,
+                "kind": kind
+            }))
+        }
+        GraphCommand::Edge {
+            graph,
+            source,
+            target,
+            kind,
+        } => {
+            database.graph_add_edge(&graph, &source, &target, &kind)?;
+            Ok(json!({
+                "ok": true,
+                "graph": graph,
+                "source": source,
+                "target": target,
+                "kind": kind
+            }))
+        }
+        GraphCommand::Neighbors {
+            graph,
+            node,
+            direction,
+            kind,
+        } => {
+            let neighbors =
+                database.graph_neighbors(&graph, &node, direction.into(), kind.as_deref())?;
+            Ok(serde_json::to_value(neighbors)?)
+        }
+        GraphCommand::Reach {
+            graph,
+            start_nodes,
+            direction,
+        } => {
+            let reachable = database.graph_reachability(&graph, &start_nodes, direction.into())?;
+            Ok(serde_json::to_value(reachable)?)
+        }
+    }
+}
+
+fn fts(database: &Database, command: FtsCommand) -> anyhow::Result<Value> {
+    match command {
+        FtsCommand::Index {
+            collection,
+            doc_id,
+            content,
+        } => {
+            database.fts_index(&collection, &doc_id, &content)?;
+            Ok(json!({
+                "ok": true,
+                "collection": collection,
+                "doc_id": doc_id
+            }))
+        }
+        FtsCommand::Search {
+            collection,
+            query,
+            limit,
+        } => {
+            let hits = database.fts_search(&collection, &query, limit)?;
+            Ok(serde_json::to_value(hits)?)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +426,116 @@ mod tests {
 
         assert_eq!(sql_res["columns"], json!(["id", "score"]));
         assert_eq!(sql_res["rows"], json!([["bob", 99]]));
+    }
+
+    #[test]
+    fn graph_and_fts_command_execution() {
+        use crate::args::DirectionArg;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cli_graph_fts.lilia");
+
+        // Graph node & edge
+        execute(
+            Command::Graph {
+                command: GraphCommand::Node {
+                    graph: "deps".into(),
+                    id: "app".into(),
+                    kind: "binary".into(),
+                    metadata: Some(r#"{"version":"1.0"}"#.into()),
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+
+        execute(
+            Command::Graph {
+                command: GraphCommand::Node {
+                    graph: "deps".into(),
+                    id: "lib".into(),
+                    kind: "library".into(),
+                    metadata: None,
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+
+        execute(
+            Command::Graph {
+                command: GraphCommand::Edge {
+                    graph: "deps".into(),
+                    source: "app".into(),
+                    target: "lib".into(),
+                    kind: "uses".into(),
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+
+        let neighbors = execute(
+            Command::Graph {
+                command: GraphCommand::Neighbors {
+                    graph: "deps".into(),
+                    node: "app".into(),
+                    direction: DirectionArg::Outgoing,
+                    kind: None,
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+        assert_eq!(neighbors, json!(["lib"]));
+
+        let reach = execute(
+            Command::Graph {
+                command: GraphCommand::Reach {
+                    graph: "deps".into(),
+                    start_nodes: vec!["app".into()],
+                    direction: DirectionArg::Outgoing,
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+        assert_eq!(reach, json!(["app", "lib"]));
+
+        // FTS index & search
+        execute(
+            Command::Fts {
+                command: FtsCommand::Index {
+                    collection: "articles".into(),
+                    doc_id: "doc1".into(),
+                    content: "liliadb high performance engine".into(),
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+
+        let search = execute(
+            Command::Fts {
+                command: FtsCommand::Search {
+                    collection: "articles".into(),
+                    query: "engine".into(),
+                    limit: 5,
+                },
+            },
+            &db_path,
+            None,
+        )
+        .unwrap();
+        let hits = search.as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["doc_id"], "doc1");
     }
 
     #[test]

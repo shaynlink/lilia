@@ -17,17 +17,18 @@ Official zero-dependency Python SDK for LiliaDB, built for high performance, AI 
 
 ## 2. Installation
 
-Install from the local repository:
+Install via PyPI:
+
+```bash
+pip install liliadb
+```
+
+Or install from the local repository for development:
 
 ```bash
 pip install -e packages/python
 ```
 
-Or add `packages/python` directly to your `PYTHONPATH`:
-
-```bash
-export PYTHONPATH="/path/to/liliadb/packages/python:$PYTHONPATH"
-```
 
 ---
 
@@ -275,6 +276,26 @@ except LiliaError as exc:
 
 ---
 
+### Real-Time CDC & Live Event Subscriptions
+
+Subscribe to live change events in real time with namespace filtering using context manager or generator:
+
+```python
+# Threaded callback subscription
+def on_event(event):
+    print(f"CDC Event: {event.type} in {event.namespace or event.space} | ID: {event.id or event.key}")
+
+with client.watch(namespace="orders", callback=on_event) as sub:
+    client.json.put("orders", "ord_100", {"customer": "Alice", "status": "paid"})
+
+# Or consume as a Python generator
+for event in client.watch(namespace="orders"):
+    print("Received event:", event)
+    break
+```
+
+---
+
 ## 6. Runnable Examples
 
 See the [`examples/python/`](file:///Users/shayn/Development/liliadb/examples/python) directory for complete scripts:
@@ -282,3 +303,5 @@ See the [`examples/python/`](file:///Users/shayn/Development/liliadb/examples/py
 - `02_json_documents.py`: JSON document store and keyset pagination.
 - `03_sql_analytics.py`: SQL analytics and aggregations over JSON collections.
 - `04_ai_agent_memory.py`: Conversational memory and session persistence for AI agents.
+- `05_cdc_live_events.py`: Real-time CDC change stream subscriptions and reactive cache sync.
+

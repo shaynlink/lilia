@@ -17,6 +17,7 @@ fn unsigned_plugins_require_explicit_development_mode() {
         development: false,
         http_port: None,
         http_bind: None,
+        encryption_key: None,
     };
     let error = load_plugins(&arguments).expect_err("unsigned mode must fail closed");
     assert!(error.to_string().contains("--development"));
@@ -35,6 +36,7 @@ fn production_rejects_plugin_root_and_inline_key_overrides() {
         development: false,
         http_port: None,
         http_bind: None,
+        encryption_key: None,
     };
     assert!(load_plugins(&arguments)
         .expect_err("root override must fail")
@@ -65,6 +67,7 @@ fn development_root_still_rejects_plugins_outside_it() {
         development: true,
         http_port: None,
         http_bind: None,
+        encryption_key: None,
     };
 
     assert!(load_plugins(&arguments)
@@ -481,6 +484,104 @@ async fn http_gateway_kv_json_sql_lifecycle() {
         serde_json::json!([["u1", "Alice"], ["u2", "Bob"]])
     );
 
+    // 5b. GRAPH ENDPOINTS
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/graph/node")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"graph":"social","id":"alice","kind":"user","metadata":{"name":"Alice"}}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/graph/node")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"graph":"social","id":"bob","kind":"user"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/graph/edge")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"graph":"social","source":"alice","target":"bob","kind":"follows"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/graph/neighbors")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"graph":"social","node":"alice","direction":"outgoing"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["neighbors"], serde_json::json!(["bob"]));
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/graph/reachability")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"graph":"social","start_nodes":["alice"],"direction":"outgoing"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["reachable"], serde_json::json!(["alice", "bob"]));
+
+    // 5c. FTS ENDPOINTS
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/fts/index")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"collection":"docs","doc_id":"doc1","content":"liliadb full text search integration"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/fts/search")
+        .header("Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"collection":"docs","query":"liliadb"}"#,
+        ))
+        .unwrap();
+    let (status, body) = send(req).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    let hits = body["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["doc_id"], "doc1");
+
     // 6. DOCTOR
     let req = axum::http::Request::builder()
         .method("GET")
@@ -502,4 +603,129 @@ async fn http_gateway_kv_json_sql_lifecycle() {
     let (status, body) = send(req).await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_ipc_streaming_subscription() {
+    use lilia_core::{BatchOperation, DatabaseEvent};
+    use lilia_protocol::{read_frame, write_frame, Operation, Request, Response, ResponseValue};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        Database::open(DatabaseOptions::durable(dir.path().join("ipc_watch.lilia"))).unwrap(),
+    );
+    let token = "test_secret_token";
+    let shutdown = Arc::new(Notify::new());
+
+    let (mut client, server) = tokio::io::duplex(8_192);
+
+    let db_clone = Arc::clone(&db);
+    let shutdown_clone = Arc::clone(&shutdown);
+    let token_clone = token.to_string();
+    tokio::spawn(async move {
+        let _ = handle_stream(server, db_clone, &token_clone, shutdown_clone).await;
+    });
+
+    // Send Subscribe request
+    let sub_req = Request {
+        id: "sub-1".into(),
+        token: token.into(),
+        deadline_ms: None,
+        operation: Operation::Subscribe {
+            namespace: Some("live_ns".into()),
+        },
+    };
+    write_frame(&mut client, &sub_req).await.unwrap();
+
+    // Read Ack response
+    let ack_resp: Response = read_frame(&mut client).await.unwrap();
+    assert_eq!(ack_resp.id, "sub-1");
+    assert!(matches!(ack_resp.result.unwrap(), ResponseValue::Ack));
+
+    // Perform mutations on database (one matching, one non-matching)
+    db.batch(&[
+        BatchOperation::KvSet {
+            namespace: "ignored_ns".into(),
+            key: b"k1".to_vec(),
+            value: b"v1".to_vec(),
+            if_version: None,
+            expires_at_ms: None,
+        },
+        BatchOperation::KvSet {
+            namespace: "live_ns".into(),
+            key: b"order_99".to_vec(),
+            value: b"created".to_vec(),
+            if_version: None,
+            expires_at_ms: None,
+        },
+    ])
+    .unwrap();
+
+    // Client should receive only the live_ns event
+    let event_resp: Response = read_frame(&mut client).await.unwrap();
+    assert_eq!(event_resp.id, "sub-1");
+    match event_resp.result.unwrap() {
+        ResponseValue::Event(DatabaseEvent::KvMutated {
+            namespace,
+            key,
+            version,
+            deleted,
+        }) => {
+            assert_eq!(namespace, "live_ns");
+            assert_eq!(key, b"order_99");
+            assert_eq!(version, Some(1));
+            assert!(!deleted);
+        }
+        other => panic!("expected KvMutated event, got {other:?}"),
+    }
+
+    // Drop client to verify clean shutdown
+    drop(client);
+    shutdown.notify_one();
+}
+
+#[tokio::test]
+async fn test_http_sse_watch_endpoint() {
+    use tower::ServiceExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        Database::open(DatabaseOptions::durable(
+            dir.path().join("http_watch.lilia"),
+        ))
+        .unwrap(),
+    );
+    let token = "test_http_token".to_string();
+    let shutdown = Arc::new(Notify::new());
+
+    let app = http::router(http::HttpState {
+        database: Arc::clone(&db),
+        token: token.clone(),
+        shutdown: Arc::clone(&shutdown),
+    });
+
+    // 1. Unauthenticated request should fail
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v1/watch")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+
+    // 2. Request with token in query string (for EventSource) should succeed with text/event-stream
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri(format!("/v1/watch?namespace=orders&token={token}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(content_type.contains("text/event-stream"));
 }

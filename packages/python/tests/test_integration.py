@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.request
@@ -199,6 +200,40 @@ class TestLiveIntegration(unittest.TestCase):
 
     def test_doctor_and_integrity(self):
         self.assertTrue(self.client.doctor())
+
+    def test_live_watch_stream(self):
+        events = []
+
+        def on_event(evt):
+            events.append(evt)
+
+        # Watch only "orders" namespace
+        sub = self.client.watch("orders", callback=on_event)
+        time.sleep(0.15)  # allow connection to be established
+
+        # Mutate in watched namespace
+        self.client.kv.set("orders", "ord_1", "created")
+        self.client.json.put("orders", "ord_doc_1", {"total": 99})
+
+        # Mutate in another namespace (should be filtered out by daemon)
+        self.client.kv.set("inventory", "item_1", "instock")
+
+        # Give a moment for events to arrive via SSE
+        for _ in range(50):
+            if len(events) >= 2:
+                break
+            time.sleep(0.05)
+
+        sub.unsubscribe()
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].type, "kv_mutated")
+        self.assertEqual(events[0].namespace, "orders")
+        self.assertEqual(events[0].key, "ord_1")
+
+        self.assertEqual(events[1].type, "json_mutated")
+        self.assertEqual(events[1].space, "orders")
+        self.assertEqual(events[1].id, "ord_doc_1")
 
 
 if __name__ == "__main__":

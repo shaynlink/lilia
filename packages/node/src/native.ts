@@ -1,10 +1,23 @@
 import { createRequire } from "node:module";
 import { existsSync, copyFileSync } from "node:fs";
-import type { BatchOperation, JsonEntry, JsonValue, KvEntry, MutationResult, SqlQueryResult } from "./types.js";
+import type {
+  BatchOperation,
+  DatabaseEvent,
+  FtsHit,
+  GraphDirection,
+  JsonEntry,
+  JsonValue,
+  KvEntry,
+  MutationResult,
+  SqlQueryResult,
+  WatchSubscription,
+} from "./types.js";
 import { LiliaError } from "./types.js";
 import { checkedVersion, checkedExpiry, readVersion } from "./version.js";
 
 interface NativeKvEntry { namespace: string; key: Buffer; value: Buffer; version: string; expiresAtMs?: number }
+interface NativeFtsHit { collection: string; doc_id?: string; docId?: string; snippet: string; rank: number }
+interface NativeSubscriptionHandle { unsubscribe(): void }
 interface NativeDatabaseHandle {
   kvGet(namespace: string, key: Buffer): Promise<NativeKvEntry | null>;
   kvScan(namespace: string, after: Buffer | undefined, limit: number): Promise<NativeKvEntry[]>;
@@ -14,6 +27,10 @@ interface NativeDatabaseHandle {
   integrityCheck(): Promise<boolean>;
   backup(destination: string): Promise<void>;
   sqlQuery(sql: string, paramsJson?: string): Promise<string>;
+  graphNeighbors(graph: string, node: string, direction: string | undefined, kind: string | undefined): Promise<string[]>;
+  graphReachability(graph: string, startNodes: string[], direction: string | undefined): Promise<string[]>;
+  ftsSearch(collection: string, query: string, limit: number | undefined): Promise<NativeFtsHit[]>;
+  watch(callback: (event: string) => void, namespace?: string): Promise<NativeSubscriptionHandle>;
   close(timeoutMs?: number): Promise<void>;
 }
 interface NativeModule { NativeDatabase: { open(options: Record<string, unknown>): Promise<NativeDatabaseHandle> } }
@@ -57,8 +74,51 @@ export class EmbeddedClient {
     return mapSqlQueryResult(JSON.parse(raw) as Record<string, unknown>);
   }
 
+  async graphNeighbors(graph: string, node: string, direction?: GraphDirection, kind?: string): Promise<string[]> {
+    return nativeCall(this.native.graphNeighbors(graph, node, direction, kind));
+  }
+
+  async graphReachability(graph: string, startNodes: string[], direction?: GraphDirection): Promise<string[]> {
+    return nativeCall(this.native.graphReachability(graph, startNodes, direction));
+  }
+
+  async ftsSearch(collection: string, query: string, limit?: number): Promise<FtsHit[]> {
+    const hits = await nativeCall(this.native.ftsSearch(collection, query, limit));
+    return hits.map(h => ({
+      collection: h.collection,
+      docId: h.docId ?? h.doc_id ?? "",
+      snippet: h.snippet,
+      rank: h.rank,
+    }));
+  }
+
   integrityCheck(): Promise<boolean> { return nativeCall(this.native.integrityCheck()); }
   backup(destination: string): Promise<void> { return nativeCall(this.native.backup(destination)); }
+  async watch(
+    namespace: string | undefined,
+    callback: (event: DatabaseEvent) => void
+  ): Promise<WatchSubscription> {
+    const handle = await nativeCall(
+      this.native.watch((...args: unknown[]) => {
+        const rawJson = args.length > 1 ? args[1] : args[0];
+        try {
+          const parsed = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
+          const event = mapDatabaseEvent(parsed);
+          if (event) {
+            callback(event);
+          }
+        } catch {}
+      }, namespace)
+    );
+
+    const sub = (() => {
+      handle.unsubscribe();
+    }) as WatchSubscription;
+    sub.unsubscribe = () => {
+      handle.unsubscribe();
+    };
+    return sub;
+  }
   close(timeoutMs?: number): Promise<void> { return nativeCall(this.native.close(timeoutMs)); }
 }
 
@@ -137,6 +197,13 @@ function toNativeWire(operation: BatchOperation): Record<string, unknown> {
     result.key = [...operation.key];
     if (operation.model === "kv_set") result.value = [...operation.value];
   }
+  if (operation.model === "graph_set_node") {
+    result.metadata = operation.metadata ?? {};
+  }
+  if (operation.model === "fts_index" || operation.model === "fts_delete") {
+    result.doc_id = operation.docId;
+    delete result.docId;
+  }
   return result;
 }
 
@@ -155,4 +222,64 @@ export function mapSqlQueryResult<T = Record<string, unknown>>(raw: Record<strin
     return obj as T;
   });
   return { columns, rows, rowsAffected, records };
+}
+
+export function mapDatabaseEvent(raw: unknown): DatabaseEvent | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const item = raw as Record<string, unknown>;
+  const type = String(item.type);
+  if (type === "kv_mutated") {
+    const rawKey = item.key;
+    const key =
+      rawKey instanceof Uint8Array
+        ? rawKey
+        : Array.isArray(rawKey)
+        ? new Uint8Array(rawKey)
+        : typeof rawKey === "string"
+        ? Buffer.from(rawKey, "hex")
+        : new Uint8Array();
+    return {
+      type: "kv_mutated",
+      namespace: String(item.namespace),
+      key,
+      version: item.version == null ? undefined : readVersion(item.version),
+      deleted: Boolean(item.deleted),
+    };
+  }
+  if (type === "json_mutated") {
+    return {
+      type: "json_mutated",
+      space: String(item.space),
+      id: String(item.id),
+      version: item.version == null ? undefined : readVersion(item.version),
+      deleted: Boolean(item.deleted),
+    };
+  }
+  if (type === "graph_node_mutated") {
+    return {
+      type: "graph_node_mutated",
+      graph: String(item.graph),
+      id: String(item.id),
+      deleted: Boolean(item.deleted),
+    };
+  }
+  if (type === "graph_edge_mutated") {
+    return {
+      type: "graph_edge_mutated",
+      graph: String(item.graph),
+      source: String(item.source),
+      target: String(item.target),
+      kind: String(item.kind),
+      deleted: Boolean(item.deleted),
+    };
+  }
+  if (type === "fts_mutated") {
+    return {
+      type: "fts_mutated",
+      collection: String(item.collection),
+      docId: String(item.doc_id ?? item.docId),
+      deleted: Boolean(item.deleted),
+    };
+  }
+  return undefined;
 }

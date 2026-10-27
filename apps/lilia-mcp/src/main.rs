@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use clap::Parser;
-use lilia_core::{BatchOperation, LiliaError};
+use lilia_core::{BatchOperation, Direction, LiliaError};
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use serde_json::{json, Value};
 
@@ -109,6 +109,7 @@ fn handle(databases: &HashMap<String, Database>, request: &Value) -> Value {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn call_tool(
     databases: &HashMap<String, Database>,
     name: &str,
@@ -123,7 +124,59 @@ fn call_tool(
         )
     })?;
     match name {
-        "lilia_schema" => Ok(json!({"models": ["kv", "json", "sql"], "database": alias})),
+        "lilia_schema" => {
+            Ok(json!({"models": ["kv", "json", "sql", "graph", "fts"], "database": alias}))
+        }
+        "lilia_graph_neighbors" => {
+            let graph = required_str(args, "graph")?;
+            let node = required_str(args, "node")?;
+            let direction = match args.get("direction").and_then(Value::as_str) {
+                Some("incoming") => Direction::Incoming,
+                Some("both") => Direction::Both,
+                _ => Direction::Outgoing,
+            };
+            let kind = args.get("kind").and_then(Value::as_str);
+            let neighbors = database.graph_neighbors(graph, node, direction, kind)?;
+            Ok(json!({
+                "graph": graph,
+                "node": node,
+                "neighbors": neighbors,
+            }))
+        }
+        "lilia_graph_reachability" => {
+            let graph = required_str(args, "graph")?;
+            let start_nodes: Vec<String> = args
+                .get("start_nodes")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    LiliaError::new(
+                        lilia_core::ErrorCode::InvalidInput,
+                        "missing array start_nodes",
+                        false,
+                    )
+                })?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect();
+            let direction = match args.get("direction").and_then(Value::as_str) {
+                Some("incoming") => Direction::Incoming,
+                Some("both") => Direction::Both,
+                _ => Direction::Outgoing,
+            };
+            let reachable = database.graph_reachability(graph, &start_nodes, direction)?;
+            Ok(json!({
+                "graph": graph,
+                "reachable": reachable,
+            }))
+        }
+        "lilia_fts_search" => {
+            let collection = required_str(args, "collection")?;
+            let query = required_str(args, "query")?;
+            let limit = optional_u32(args, "limit", 10);
+            let hits = database.fts_search(collection, query, limit)?;
+            serde_json::to_value(hits).map_err(json_error)
+        }
         "lilia_sql_query" => {
             let sql = required_str(args, "sql")?;
             let params: Vec<Value> = args
@@ -186,6 +239,7 @@ fn call_tool(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn tool_definitions() -> Vec<Value> {
     let string = || json!({"type": "string"});
     vec![
@@ -238,6 +292,60 @@ fn tool_definitions() -> Vec<Value> {
                 "params": {"type": "array", "description": "Optional positional query parameters (?1, ?2...)", "items": {}}
             }),
             &["database", "sql"],
+        ),
+        tool(
+            "lilia_graph_neighbors",
+            json!({
+                "database": string(),
+                "graph": string(),
+                "node": string(),
+                "direction": {
+                    "type": "string",
+                    "enum": ["outgoing", "incoming", "both"],
+                    "description": "Direction of edges to traverse (default outgoing)"
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Optional edge kind filter"
+                }
+            }),
+            &["database", "graph", "node"],
+        ),
+        tool(
+            "lilia_graph_reachability",
+            json!({
+                "database": string(),
+                "graph": string(),
+                "start_nodes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Starting nodes for reachability analysis"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["outgoing", "incoming", "both"],
+                    "description": "Direction of edges to traverse (default outgoing)"
+                }
+            }),
+            &["database", "graph", "start_nodes"],
+        ),
+        tool(
+            "lilia_fts_search",
+            json!({
+                "database": string(),
+                "collection": string(),
+                "query": {
+                    "type": "string",
+                    "description": "Full-text search query (supports SQLite FTS5 MATCH syntax)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "description": "Maximum number of hits to return (default 10)"
+                }
+            }),
+            &["database", "collection", "query"],
         ),
     ]
 }
@@ -314,6 +422,9 @@ mod tests {
         assert!(names.contains(&"lilia_integrity_check"));
         assert!(names.contains(&"lilia_checkpoint_stats"));
         assert!(names.contains(&"lilia_sql_query"));
+        assert!(names.contains(&"lilia_graph_neighbors"));
+        assert!(names.contains(&"lilia_graph_reachability"));
+        assert!(names.contains(&"lilia_fts_search"));
     }
 
     #[test]
@@ -382,5 +493,92 @@ mod tests {
         .unwrap();
         assert_eq!(backup["ok"], true);
         assert!(backup_path.exists());
+    }
+
+    #[test]
+    fn call_graph_and_fts_tools() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.lilia");
+        let database = Database::open(DatabaseOptions::durable(&path)).unwrap();
+        database
+            .batch(&[
+                BatchOperation::GraphSetNode {
+                    graph: "deps".into(),
+                    id: "a".into(),
+                    kind: "service".into(),
+                    metadata: json!({"name": "A"}),
+                },
+                BatchOperation::GraphSetNode {
+                    graph: "deps".into(),
+                    id: "b".into(),
+                    kind: "service".into(),
+                    metadata: json!({"name": "B"}),
+                },
+                BatchOperation::GraphAddEdge {
+                    graph: "deps".into(),
+                    source: "a".into(),
+                    target: "b".into(),
+                    kind: "calls".into(),
+                },
+                BatchOperation::FtsIndex {
+                    collection: "articles".into(),
+                    doc_id: "art1".into(),
+                    content: "LiliaDB supports fast full-text search and graphs".into(),
+                },
+            ])
+            .unwrap();
+        let mut databases = HashMap::new();
+        databases.insert("demo".to_string(), database);
+
+        let schema = call_tool(&databases, "lilia_schema", &json!({"database": "demo"})).unwrap();
+        assert_eq!(
+            schema["models"],
+            json!(["kv", "json", "sql", "graph", "fts"])
+        );
+
+        let neighbors = call_tool(
+            &databases,
+            "lilia_graph_neighbors",
+            &json!({
+                "database": "demo",
+                "graph": "deps",
+                "node": "a",
+                "direction": "outgoing"
+            }),
+        )
+        .unwrap();
+        assert_eq!(neighbors["graph"], "deps");
+        assert_eq!(neighbors["node"], "a");
+        assert_eq!(neighbors["neighbors"], json!(["b"]));
+
+        let reach = call_tool(
+            &databases,
+            "lilia_graph_reachability",
+            &json!({
+                "database": "demo",
+                "graph": "deps",
+                "start_nodes": ["a"],
+                "direction": "outgoing"
+            }),
+        )
+        .unwrap();
+        let reachable = reach["reachable"].as_array().unwrap();
+        assert!(reachable.contains(&json!("a")));
+        assert!(reachable.contains(&json!("b")));
+
+        let fts = call_tool(
+            &databases,
+            "lilia_fts_search",
+            &json!({
+                "database": "demo",
+                "collection": "articles",
+                "query": "full-text",
+                "limit": 5
+            }),
+        )
+        .unwrap();
+        let hits = fts.as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["doc_id"], "art1");
     }
 }

@@ -1,16 +1,40 @@
-#![allow(clippy::missing_errors_doc, clippy::needless_pass_by_value)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value,
+    clippy::unused_async,
+    clippy::needless_continue
+)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use lilia_core::{BatchOperation, Durability};
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use napi::bindgen_prelude::{Buffer, Error, Result, Status};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 #[napi]
 #[derive(Debug)]
 pub struct NativeDatabase {
     inner: Arc<Database>,
+}
+
+#[napi]
+#[derive(Debug)]
+pub struct NativeSubscription {
+    cancel_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+}
+
+#[napi]
+impl NativeSubscription {
+    #[napi]
+    pub fn unsubscribe(&self) {
+        if let Ok(mut guard) = self.cancel_tx.lock() {
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
 }
 
 #[napi(object)]
@@ -22,6 +46,7 @@ pub struct NativeOpenOptions {
     pub writer_queue_capacity: Option<u32>,
     pub read_pool_size: Option<u32>,
     pub checkpoint_policy: Option<NativeCheckpointPolicy>,
+    pub encryption_key: Option<String>,
 }
 
 #[napi(object)]
@@ -53,6 +78,15 @@ impl std::fmt::Debug for NativeKvEntry {
     }
 }
 
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct NativeFtsHit {
+    pub collection: String,
+    pub doc_id: String,
+    pub snippet: String,
+    pub rank: f64,
+}
+
 #[napi]
 impl NativeDatabase {
     #[napi(factory)]
@@ -80,6 +114,10 @@ impl NativeDatabase {
                 if let Some(value) = policy.interval_ms {
                     settings.checkpoint_policy.interval_ms = u64::from(value);
                 }
+            }
+            if let Some(key) = options.encryption_key {
+                settings = settings
+                    .with_codec(Arc::new(lilia_core::Aes256GcmCodec::from_passphrase(&key)));
             }
             Database::open(settings).map_err(napi_error)
         })
@@ -229,6 +267,113 @@ impl NativeDatabase {
         })
         .await
         .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn graph_neighbors(
+        &self,
+        graph: String,
+        node: String,
+        direction: Option<String>,
+        kind: Option<String>,
+    ) -> Result<Vec<String>> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let dir = match direction.as_deref() {
+                Some("incoming") => lilia_core::Direction::Incoming,
+                Some("both") => lilia_core::Direction::Both,
+                _ => lilia_core::Direction::Outgoing,
+            };
+            database
+                .graph_neighbors(&graph, &node, dir, kind.as_deref())
+                .map_err(napi_error)
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn graph_reachability(
+        &self,
+        graph: String,
+        start_nodes: Vec<String>,
+        direction: Option<String>,
+    ) -> Result<Vec<String>> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let dir = match direction.as_deref() {
+                Some("incoming") => lilia_core::Direction::Incoming,
+                Some("both") => lilia_core::Direction::Both,
+                _ => lilia_core::Direction::Outgoing,
+            };
+            database
+                .graph_reachability(&graph, &start_nodes, dir)
+                .map_err(napi_error)
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn fts_search(
+        &self,
+        collection: String,
+        query: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<NativeFtsHit>> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let hits = database
+                .fts_search(&collection, &query, limit.unwrap_or(10))
+                .map_err(napi_error)?;
+            Ok(hits
+                .into_iter()
+                .map(|h| NativeFtsHit {
+                    collection: h.collection,
+                    doc_id: h.doc_id,
+                    snippet: h.snippet,
+                    rank: h.rank,
+                })
+                .collect())
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi(ts_args_type = "callback: (event: string) => void, namespace?: string")]
+    pub async fn watch(
+        &self,
+        callback: ThreadsafeFunction<String>,
+        namespace: Option<String>,
+    ) -> Result<NativeSubscription> {
+        let (tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let cancel_tx = Arc::new(Mutex::new(Some(tx)));
+        let mut rx = self.inner.subscribe();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut cancel_rx => {
+                        break;
+                    }
+                    evt = rx.recv() => {
+                        match evt {
+                            Ok(event) => {
+                                if event.matches_filter(namespace.as_deref()) {
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        callback.call(Ok(json), ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(NativeSubscription { cancel_tx })
     }
 
     #[napi]

@@ -5,6 +5,9 @@ import { Readable } from "node:stream";
 import { LiliaError } from "./types.js";
 import type {
   BatchOperation,
+  DatabaseEvent,
+  FtsHit,
+  GraphDirection,
   JsonEntry,
   JsonValue,
   KvEntry,
@@ -12,6 +15,7 @@ import type {
   OpenOptions,
   ScanStreamOptions,
   SqlQueryResult,
+  WatchSubscription,
 } from "./types.js";
 
 export * from "./types.js";
@@ -41,6 +45,7 @@ export class Database {
         writerQueueCapacity: options.writerQueueCapacity,
         readPoolSize: options.readPoolSize,
         checkpointPolicy: options.checkpointPolicy,
+        encryptionKey: options.encryptionKey,
       });
     return new Database(client);
   }
@@ -59,6 +64,8 @@ export class Database {
       this.kvScanStream(namespace, options),
     createReadStream: (namespace: string, options: ScanStreamOptions<Uint8Array> = {}): Readable =>
       Readable.from(this.kvScanStream(namespace, options), { objectMode: true }),
+    watch: (namespace: string, callback: (event: DatabaseEvent) => void): Promise<WatchSubscription> =>
+      this.watch(namespace, callback),
   };
 
   readonly json = {
@@ -75,6 +82,26 @@ export class Database {
       this.jsonScanStream(space, options),
     createReadStream: (space: string, options: ScanStreamOptions<string> = {}): Readable =>
       Readable.from(this.jsonScanStream(space, options), { objectMode: true }),
+    watch: (space: string, callback: (event: DatabaseEvent) => void): Promise<WatchSubscription> =>
+      this.watch(space, callback),
+  };
+
+  readonly graph = {
+    setNode: async (graph: string, id: string, kind: string, metadata?: JsonValue): Promise<MutationResult> =>
+      (await this.batch([{ model: "graph_set_node", graph, id, kind, metadata }]))[0]!,
+    addEdge: async (graph: string, source: string, target: string, kind: string): Promise<MutationResult> =>
+      (await this.batch([{ model: "graph_add_edge", graph, source, target, kind }]))[0]!,
+    neighbors: (graph: string, node: string, options: { direction?: GraphDirection; kind?: string } = {}): Promise<string[]> =>
+      this.run(client => client.graphNeighbors(graph, node, options.direction, options.kind)),
+    reachability: (graph: string, startNodes: string[], options: { direction?: GraphDirection } = {}): Promise<string[]> =>
+      this.run(client => client.graphReachability(graph, startNodes, options.direction)),
+  };
+
+  readonly fts = {
+    index: async (collection: string, docId: string, content: string): Promise<MutationResult> =>
+      (await this.batch([{ model: "fts_index", collection, docId, content }]))[0]!,
+    search: (collection: string, query: string, options: { limit?: number } = {}): Promise<FtsHit[]> =>
+      this.run(client => client.ftsSearch(collection, query, options.limit)),
   };
 
   readonly sql = {
@@ -85,6 +112,18 @@ export class Database {
     raw: <T = Record<string, unknown>>(sql: string, params: JsonValue[] = []): Promise<SqlQueryResult<T>> =>
       this.run(client => client.sqlQuery(sql, params) as Promise<SqlQueryResult<T>>),
   };
+
+  watch(
+    namespaceOrCallback?: string | ((event: DatabaseEvent) => void),
+    callback?: (event: DatabaseEvent) => void
+  ): Promise<WatchSubscription> {
+    const namespace = typeof namespaceOrCallback === "string" ? namespaceOrCallback : undefined;
+    const cb = typeof namespaceOrCallback === "function" ? namespaceOrCallback : callback;
+    if (!cb) {
+      throw new TypeError("watch callback must be a function");
+    }
+    return this.run(client => client.watch(namespace, cb));
+  }
 
   batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> { return this.run(client => client.batch(operations)); }
   integrityCheck(): Promise<boolean> { return this.run(client => client.integrityCheck()); }

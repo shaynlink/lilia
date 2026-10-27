@@ -171,6 +171,24 @@ pub enum DatabaseEvent {
     },
 }
 
+impl DatabaseEvent {
+    #[must_use]
+    pub fn matches_filter(&self, filter: Option<&str>) -> bool {
+        let Some(filter) = filter else { return true };
+        if filter.is_empty() || filter == "*" {
+            return true;
+        }
+        match self {
+            Self::KvMutated { namespace, .. } => namespace == filter,
+            Self::JsonMutated { space, .. } => space == filter,
+            Self::GraphNodeMutated { graph, .. } | Self::GraphEdgeMutated { graph, .. } => {
+                graph == filter
+            }
+            Self::FtsMutated { collection, .. } => collection == filter,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlQueryResult {
     pub columns: Vec<String>,

@@ -1,0 +1,78 @@
+name: publish-npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. latest or next)"
+        required: false
+        default: "latest"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  compat-verify:
+    name: Cross-Runtime Compatibility Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Build native and TypeScript
+        run: |
+          cargo build -p lilia-node-native -p lilia-daemon --release
+          pnpm install --frozen-lockfile
+          pnpm --filter @liliadb/node build
+          mkdir -p packages/node-linux-x64-gnu
+          cp target/release/liblilia_node_native.so packages/node-linux-x64-gnu/lilia_node_native.node
+      - name: Verify Node.js
+        run: node --test packages/node/dist/**/*.test.js
+      - name: Verify Bun
+        run: |
+          bun test packages/node/dist/database.test.js
+          bun test packages/node/tests/compat-bun.test.ts
+      - name: Verify Deno
+        run: deno test --allow-all packages/node/tests/compat-deno.test.ts
+
+  publish:
+    needs: compat-verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @liliadb/node build
+      - name: Publish Platform Prebuilds
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in packages/node-*; do
+            if [ -f "$pkg/package.json" ]; then
+              echo "Publishing $pkg..."
+              pnpm --dir "$pkg" publish --no-git-checks --access public --tag "${{ inputs.tag }}" --provenance || true
+            fi
+          done
+      - name: Publish @liliadb/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @liliadb/node publish --no-git-checks --access public --tag "${{ inputs.tag }}" --provenance

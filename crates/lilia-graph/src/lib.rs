@@ -68,6 +68,21 @@ impl<'a> GraphStore<'a> {
             .graph_list_edges(&self.graph_id, source, target, kind, limit)
     }
 
+    pub fn neighbors(&self, node: &str, direction: Direction) -> Result<Vec<String>> {
+        self.db
+            .graph_neighbors(&self.graph_id, node, direction, None)
+    }
+
+    pub fn neighbors_with_kind(
+        &self,
+        node: &str,
+        direction: Direction,
+        kind: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.db
+            .graph_neighbors(&self.graph_id, node, direction, kind)
+    }
+
     pub fn reachability(
         &self,
         start_nodes: &[String],
@@ -136,6 +151,25 @@ mod tests {
         graph.add_edge("auth", "core", "depends_on").unwrap();
         graph.add_edge("api", "auth", "depends_on").unwrap();
         graph.add_edge("web", "api", "depends_on").unwrap();
+
+        // Neighbors test
+        assert_eq!(
+            graph.neighbors("auth", Direction::Outgoing).unwrap(),
+            vec!["core"]
+        );
+        assert_eq!(
+            graph.neighbors("auth", Direction::Incoming).unwrap(),
+            vec!["api"]
+        );
+        let mut both = graph.neighbors("auth", Direction::Both).unwrap();
+        both.sort();
+        assert_eq!(both, vec!["api", "core"]);
+        assert_eq!(
+            graph
+                .neighbors_with_kind("auth", Direction::Outgoing, Some("other"))
+                .unwrap(),
+            Vec::<String>::new()
+        );
 
         let impact = graph.impact_analysis(&["core".to_string()]).unwrap();
         assert_eq!(impact.direct, vec!["core"]);

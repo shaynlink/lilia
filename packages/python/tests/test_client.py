@@ -162,6 +162,117 @@ class TestClient(unittest.TestCase):
         self.mock.set_response("/v1/backup", {"ok": True})
         self.assertTrue(self.client.backup("/tmp/bak.lilia"))
 
+    def test_graph_operations(self):
+        self.mock.set_response("/v1/graph/node", {"ok": True})
+        ok = self.client.graph.set_node("dep_graph", "n1", "pkg", {"name": "core"})
+        self.assertTrue(ok)
+        self.assertEqual(self.mock.calls[-1]["payload"]["graph"], "dep_graph")
+        self.assertEqual(self.mock.calls[-1]["payload"]["id"], "n1")
+
+        self.mock.set_response("/v1/graph/edge", {"ok": True})
+        ok = self.client.graph.add_edge("dep_graph", "n1", "n2", "imports")
+        self.assertTrue(ok)
+        self.assertEqual(self.mock.calls[-1]["payload"]["source"], "n1")
+        self.assertEqual(self.mock.calls[-1]["payload"]["target"], "n2")
+
+        self.mock.set_response("/v1/graph/neighbors", {"ok": True, "neighbors": ["n2"]})
+        neighbors = self.client.graph.neighbors("dep_graph", "n1", direction="outgoing")
+        self.assertEqual(neighbors, ["n2"])
+
+        self.mock.set_response("/v1/graph/reachability", {"ok": True, "reachable": ["n1", "n2"]})
+        reachable = self.client.graph.reachability("dep_graph", ["n1"])
+        self.assertEqual(reachable, ["n1", "n2"])
+
+    def test_fts_operations(self):
+        self.mock.set_response("/v1/fts/index", {"ok": True})
+        ok = self.client.fts.index("articles", "doc1", "fast embedded search")
+        self.assertTrue(ok)
+        self.assertEqual(self.mock.calls[-1]["payload"]["collection"], "articles")
+        self.assertEqual(self.mock.calls[-1]["payload"]["content"], "fast embedded search")
+
+        self.mock.set_response(
+            "/v1/fts/search",
+            {
+                "ok": True,
+                "hits": [
+                    {
+                        "collection": "articles",
+                        "doc_id": "doc1",
+                        "snippet": "fast <b>embedded</b> search",
+                        "rank": -0.85,
+                    }
+                ],
+            },
+        )
+        hits = self.client.fts.search("articles", "embedded", limit=5)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].doc_id, "doc1")
+        self.assertEqual(hits[0].collection, "articles")
+        self.assertEqual(hits[0].snippet, "fast <b>embedded</b> search")
+        self.assertEqual(hits[0].rank, -0.85)
+
+    def test_database_event_parsing(self):
+        from liliadb.client import _parse_database_event
+
+        # kv_mutated with byte list key
+        kv_raw = {
+            "type": "kv_mutated",
+            "namespace": "users",
+            "key": [117, 115, 101, 114, 95, 49],
+            "version": 42,
+            "deleted": False,
+        }
+        event = _parse_database_event(kv_raw)
+        self.assertEqual(event.type, "kv_mutated")
+        self.assertEqual(event.namespace, "users")
+        self.assertEqual(event.key, "user_1")
+        self.assertEqual(event.version, "42")
+        self.assertFalse(event.deleted)
+
+        # json_mutated
+        json_raw = {
+            "type": "json_mutated",
+            "space": "profiles",
+            "id": "p1",
+            "version": 1,
+            "deleted": True,
+        }
+        event = _parse_database_event(json_raw)
+        self.assertEqual(event.type, "json_mutated")
+        self.assertEqual(event.space, "profiles")
+        self.assertEqual(event.id, "p1")
+        self.assertEqual(event.version, "1")
+        self.assertTrue(event.deleted)
+
+        # graph_edge_mutated
+        graph_raw = {
+            "type": "graph_edge_mutated",
+            "graph": "social",
+            "source": "alice",
+            "target": "bob",
+            "kind": "friend",
+        }
+        event = _parse_database_event(graph_raw)
+        self.assertEqual(event.type, "graph_edge_mutated")
+        self.assertEqual(event.graph, "social")
+        self.assertEqual(event.source, "alice")
+        self.assertEqual(event.target, "bob")
+        self.assertEqual(event.kind, "friend")
+
+        # fts_mutated
+        fts_raw = {
+            "type": "fts_mutated",
+            "collection": "docs",
+            "doc_id": "d1",
+            "deleted": False,
+        }
+        event = _parse_database_event(fts_raw)
+        self.assertEqual(event.type, "fts_mutated")
+        self.assertEqual(event.collection, "docs")
+        self.assertEqual(event.doc_id, "d1")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

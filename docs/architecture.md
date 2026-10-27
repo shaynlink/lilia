@@ -286,3 +286,19 @@ decoded into `LiliaError`, and binary daemon error UUIDs become string request I
 Document, Graph, and replication plugins continue active development adhering to
 the same transaction boundary and protecting `_lilia_*` tables.
 
+## Real-Time CDC & Event Streaming Architecture
+
+LiliaDB includes a zero-copy Change Data Capture (CDC) event streaming engine:
+- **Transaction Ingestion**: Whenever mutations commit to the SQLite WAL, structured change events (`kv_mutated`, `json_mutated`, `graph_node_mutated`, `graph_edge_mutated`, `fts_mutated`) are generated within the transaction boundary.
+- **In-Memory Ring Buffer**: Events pass through a bounded, non-blocking broadcast channel to active subscribers without stalling writer transactions.
+- **IPC Streaming Framing**: Over local Unix domain sockets and Windows named pipes, streaming subscriptions use dedicated protocol framing (`RequestPayload::SubscribeWatch`, `ResponsePayload::WatchEvent`) maintaining sub-millisecond dispatch.
+- **HTTP Server-Sent Events (SSE)**: The daemon's HTTP gateway exposes `GET /v1/watch?namespace=<ns>`, allowing any HTTP/SSE client to consume real-time change events without proprietary drivers.
+
+## Multi-Runtime Ecosystem (Node.js, Bun, Deno)
+
+The `@liliadb/node` package is engineered for broad compatibility across modern server-side JavaScript runtimes:
+- **Node.js (>=22)**: Fully supports in-process embedded storage via Node-API precompiled binaries and daemon IPC via `node:net`.
+- **Bun (>=1.0)**: Native Node-API support allows Bun to execute both embedded `.node` prebuilds and daemon IPC natively at high throughput.
+- **Deno (>=2.0)**: Supports `npm:@liliadb/node` via Deno's standard Node compatibility layer, connecting over Unix domain sockets with zero external dependencies.
+
+

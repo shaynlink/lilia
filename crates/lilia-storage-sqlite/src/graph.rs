@@ -232,4 +232,87 @@ impl Database {
         }
         Ok(nodes)
     }
+
+    pub fn graph_neighbors(
+        &self,
+        graph: &str,
+        node: &str,
+        direction: Direction,
+        kind_filter: Option<&str>,
+    ) -> Result<Vec<String>> {
+        validate_name("graph", graph)?;
+        validate_name("node", node)?;
+        let conn = self.read_lock()?;
+        let (sql, params_vec): (&'static str, Vec<rusqlite::types::Value>) = match direction {
+            Direction::Outgoing => {
+                if let Some(kind) = kind_filter {
+                    (
+                        "SELECT DISTINCT target FROM _lilia_graph_edges WHERE graph = ?1 AND source = ?2 AND kind = ?3 ORDER BY target",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                            rusqlite::types::Value::from(kind.to_string()),
+                        ],
+                    )
+                } else {
+                    (
+                        "SELECT DISTINCT target FROM _lilia_graph_edges WHERE graph = ?1 AND source = ?2 ORDER BY target",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                        ],
+                    )
+                }
+            }
+            Direction::Incoming => {
+                if let Some(kind) = kind_filter {
+                    (
+                        "SELECT DISTINCT source FROM _lilia_graph_edges WHERE graph = ?1 AND target = ?2 AND kind = ?3 ORDER BY source",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                            rusqlite::types::Value::from(kind.to_string()),
+                        ],
+                    )
+                } else {
+                    (
+                        "SELECT DISTINCT source FROM _lilia_graph_edges WHERE graph = ?1 AND target = ?2 ORDER BY source",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                        ],
+                    )
+                }
+            }
+            Direction::Both => {
+                if let Some(kind) = kind_filter {
+                    (
+                        "SELECT DISTINCT CASE WHEN source = ?2 THEN target ELSE source END AS neighbor FROM _lilia_graph_edges WHERE graph = ?1 AND (source = ?2 OR target = ?2) AND kind = ?3 ORDER BY neighbor",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                            rusqlite::types::Value::from(kind.to_string()),
+                        ],
+                    )
+                } else {
+                    (
+                        "SELECT DISTINCT CASE WHEN source = ?2 THEN target ELSE source END AS neighbor FROM _lilia_graph_edges WHERE graph = ?1 AND (source = ?2 OR target = ?2) ORDER BY neighbor",
+                        vec![
+                            rusqlite::types::Value::from(graph.to_string()),
+                            rusqlite::types::Value::from(node.to_string()),
+                        ],
+                    )
+                }
+            }
+        };
+        let mut stmt = conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |r| {
+            r.get::<_, String>(0)
+        })?;
+        let mut neighbors = Vec::new();
+        for r in rows {
+            neighbors.push(r?);
+        }
+        Ok(neighbors)
+    }
 }

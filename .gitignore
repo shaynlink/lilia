@@ -14,9 +14,15 @@ release/
 *.sock
 *.token
 *.asc
+!release-signing-public-key.asc
 
 # Node-API native prebuild binaries
 *.node
+
+# Release and package distributions
+*.tgz
+*.tar.gz
+release/
 
 # Test staging and handshake flags
 *.staged
@@ -37,3 +43,5 @@ __pycache__/
 .pytest_cache/
 .coverage
 .venv/
+dist/
+build/

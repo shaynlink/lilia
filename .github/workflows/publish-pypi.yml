@@ -1,0 +1,48 @@
+name: publish-pypi
+
+on:
+  push:
+    tags: ["v*.*.*", "v*.*.*-alpha.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - name: Build local daemon for integration tests
+        run: cargo build -p lilia-daemon
+      - name: Run Python test suite
+        run: PYTHONPATH=packages/python python -m unittest discover -s packages/python/tests -v
+
+  build-and-publish:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install packaging tools
+        run: python -m pip install --upgrade build twine
+      - name: Build sdist and wheel
+        run: python -m build packages/python
+      - name: Verify package distributions
+        run: twine check --strict packages/python/dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/python/dist/
+          skip-existing: true

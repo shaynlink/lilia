@@ -1,6 +1,9 @@
 use std::io;
 
-use lilia_core::{BatchOperation, JsonEntry, KvEntry, LiliaError, MutationResult};
+use lilia_core::{
+    BatchOperation, DatabaseEvent, Direction, FtsHit, JsonEntry, KvEntry, LiliaError,
+    MutationResult,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -56,6 +59,25 @@ pub enum Operation {
         sql: String,
         params: Vec<serde_json::Value>,
     },
+    GraphNeighbors {
+        graph: String,
+        node: String,
+        direction: Direction,
+        kind: Option<String>,
+    },
+    GraphReachability {
+        graph: String,
+        start_nodes: Vec<String>,
+        direction: Direction,
+    },
+    FtsSearch {
+        collection: String,
+        query: String,
+        limit: u32,
+    },
+    Subscribe {
+        namespace: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +103,10 @@ pub enum ResponseValue {
     JsonPage(Vec<JsonEntry>),
     Mutations(Vec<MutationResult>),
     Sql(lilia_core::SqlQueryResult),
+    GraphNeighbors(Vec<String>),
+    GraphReachability(Vec<String>),
+    FtsHits(Vec<FtsHit>),
+    Event(DatabaseEvent),
 }
 
 /// Decode one size-prefixed `MessagePack` frame.

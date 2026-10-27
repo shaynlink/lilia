@@ -13,6 +13,7 @@ export interface OpenOptions {
   writerQueueCapacity?: number;
   readPoolSize?: number;
   checkpointPolicy?: { walBytes?: number; intervalMs?: number };
+  encryptionKey?: string;
 }
 
 export interface KvEntry {
@@ -36,11 +37,38 @@ export interface ScanStreamOptions<T = string | Uint8Array> {
   batchSize?: number;
 }
 
+export type GraphDirection = "outgoing" | "incoming" | "both";
+
+export interface FtsHit {
+  collection: string;
+  docId: string;
+  snippet: string;
+  rank: number;
+}
+
 export type BatchOperation =
   | { model: "kv_set"; namespace: string; key: Uint8Array; value: Uint8Array; ifVersion?: bigint; expiresAtMs?: number }
   | { model: "kv_delete"; namespace: string; key: Uint8Array; ifVersion?: bigint }
   | { model: "json_put"; space: string; id: string; value: JsonValue; ifVersion?: bigint }
-  | { model: "json_delete"; space: string; id: string; ifVersion?: bigint };
+  | { model: "json_delete"; space: string; id: string; ifVersion?: bigint }
+  | { model: "graph_set_node"; graph: string; id: string; kind: string; metadata?: JsonValue }
+  | { model: "graph_delete_node"; graph: string; id: string }
+  | { model: "graph_add_edge"; graph: string; source: string; target: string; kind: string }
+  | { model: "graph_remove_edge"; graph: string; source: string; target: string; kind: string }
+  | { model: "fts_index"; collection: string; docId: string; content: string }
+  | { model: "fts_delete"; collection: string; docId: string };
+
+export type DatabaseEvent =
+  | { type: "kv_mutated"; namespace: string; key: Uint8Array; version?: bigint; deleted: boolean }
+  | { type: "json_mutated"; space: string; id: string; version?: bigint; deleted: boolean }
+  | { type: "graph_node_mutated"; graph: string; id: string; deleted: boolean }
+  | { type: "graph_edge_mutated"; graph: string; source: string; target: string; kind: string; deleted: boolean }
+  | { type: "fts_mutated"; collection: string; docId: string; deleted: boolean };
+
+export interface WatchSubscription {
+  unsubscribe(): void | Promise<void>;
+  (): void | Promise<void>;
+}
 
 export interface MutationResult { version?: bigint; deleted: boolean }
 

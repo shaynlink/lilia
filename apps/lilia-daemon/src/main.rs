@@ -10,7 +10,7 @@ use lilia_protocol::{
 };
 use lilia_storage_sqlite::{Database, DatabaseOptions};
 use subtle::ConstantTimeEq;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::sync::{Notify, Semaphore};
 use tracing::info;
 use uuid::Uuid;
@@ -52,6 +52,9 @@ struct Arguments {
     /// Optional custom socket address for local loopback HTTP REST gateway.
     #[arg(long = "http-bind")]
     http_bind: Option<std::net::SocketAddr>,
+    /// Optional passphrase or key to enable AES-256-GCM encryption at rest.
+    #[arg(long = "encryption-key")]
+    encryption_key: Option<String>,
 }
 
 #[tokio::main]
@@ -83,6 +86,14 @@ async fn main() -> anyhow::Result<()> {
             options = options.with_codec(Arc::new(codec));
             break;
         }
+    }
+    let encryption_key = arguments
+        .encryption_key
+        .clone()
+        .or_else(|| std::env::var("LILIA_ENCRYPTION_KEY").ok());
+    if let Some(ref key) = encryption_key {
+        info!("enabled AES-256-GCM at-rest encryption codec");
+        options = options.with_codec(Arc::new(lilia_core::Aes256GcmCodec::from_passphrase(key)));
     }
     let database = Arc::new(Database::open(options)?);
     let shutdown = Arc::new(Notify::new());
@@ -295,6 +306,7 @@ async fn close_database(database: Arc<Database>) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_stream<S>(
     mut stream: S,
     database: Arc<Database>,
@@ -319,6 +331,76 @@ where
         let should_shutdown = matches!(request.operation, Operation::Shutdown);
         let started = Instant::now();
         let request_uuid = Uuid::parse_str(&request.id).unwrap_or_else(|_| Uuid::new_v4());
+
+        if let Operation::Subscribe { namespace } = request.operation {
+            let authorized = bool::from(request.token.as_bytes().ct_eq(token.as_bytes()));
+            if !authorized {
+                let err = LiliaError::new(ErrorCode::Unauthorized, "invalid daemon token", false)
+                    .with_request_id(request_uuid);
+                write_frame(
+                    &mut stream,
+                    &Response {
+                        id: request.id,
+                        result: Err(err),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            write_frame(
+                &mut stream,
+                &Response {
+                    id: request.id.clone(),
+                    result: Ok(ResponseValue::Ack),
+                },
+            )
+            .await?;
+            info!(
+                request_id,
+                operation = "subscribe",
+                namespace = namespace.as_deref().unwrap_or("*"),
+                "client subscription started"
+            );
+            let mut rx = database.subscribe();
+            let mut read_buf = [0u8; 1];
+            loop {
+                tokio::select! {
+                    evt = rx.recv() => {
+                        match evt {
+                            Ok(event) => {
+                                if event.matches_filter(namespace.as_deref())
+                                    && write_frame(
+                                        &mut stream,
+                                        &Response {
+                                            id: request.id.clone(),
+                                            result: Ok(ResponseValue::Event(event)),
+                                        },
+                                    )
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(skipped, "ipc subscriber lagged behind events");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    res = stream.read(&mut read_buf) => {
+                        match res {
+                            Ok(0) | Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                    () = shutdown.notified() => break,
+                }
+            }
+            info!(request_id, "client subscription closed");
+            return Ok(());
+        }
+
         let result = if bool::from(request.token.as_bytes().ct_eq(token.as_bytes())) {
             execute(
                 Arc::clone(&database),
@@ -405,6 +487,10 @@ fn operation_name(operation: &Operation) -> &'static str {
         Operation::JsonScan { .. } => "json_scan",
         Operation::Batch { .. } => "batch",
         Operation::SqlQuery { .. } => "sql_query",
+        Operation::GraphNeighbors { .. } => "graph_neighbors",
+        Operation::GraphReachability { .. } => "graph_reachability",
+        Operation::FtsSearch { .. } => "fts_search",
+        Operation::Subscribe { .. } => "subscribe",
     }
 }
 
@@ -414,7 +500,15 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
             ResponseValue::Handshake {
                 major: PROTOCOL_MAJOR,
                 minor: PROTOCOL_MINOR,
-                capabilities: vec!["kv".into(), "json".into(), "batch".into(), "sql".into()],
+                capabilities: vec![
+                    "kv".into(),
+                    "json".into(),
+                    "batch".into(),
+                    "sql".into(),
+                    "graph".into(),
+                    "fts".into(),
+                    "watch".into(),
+                ],
             }
         }
         Operation::Handshake { .. } => {
@@ -430,6 +524,7 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
             database.backup(destination)?;
             ResponseValue::Ack
         }
+        Operation::Subscribe { .. } => ResponseValue::Ack,
         Operation::KvGet { namespace, key } => {
             ResponseValue::Kv(database.kv_get(&namespace, &key)?)
         }
@@ -448,5 +543,30 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
         Operation::SqlQuery { sql, params } => {
             ResponseValue::Sql(database.sql_query(&sql, &params)?)
         }
+        Operation::GraphNeighbors {
+            graph,
+            node,
+            direction,
+            kind,
+        } => ResponseValue::GraphNeighbors(database.graph_neighbors(
+            &graph,
+            &node,
+            direction,
+            kind.as_deref(),
+        )?),
+        Operation::GraphReachability {
+            graph,
+            start_nodes,
+            direction,
+        } => ResponseValue::GraphReachability(database.graph_reachability(
+            &graph,
+            &start_nodes,
+            direction,
+        )?),
+        Operation::FtsSearch {
+            collection,
+            query,
+            limit,
+        } => ResponseValue::FtsHits(database.fts_search(&collection, &query, limit)?),
     })
 }

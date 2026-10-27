@@ -70,6 +70,20 @@ node examples/node-sql.mjs
 
 ---
 
+### 5. Live Events & CDC Streaming (`node-watch.mjs`)
+Demonstrates reactive Change Data Capture (CDC) with `db.watch()`:
+- Subscribing to live mutations across KV, JSON, Graph, and FTS models
+- Unified namespace filtering (`db.watch("orders", callback)`)
+- Building reactive in-memory caches and real-time UI synchronization
+- Unsubscribing cleanly via `subscription.unsubscribe()`
+
+**Run:**
+```sh
+node examples/node-watch.mjs
+```
+
+---
+
 ## Native Rust Examples (`crates/lilia-storage-sqlite/examples`)
 
 Native Rust applications can embed LiliaDB directly with zero FFI overhead.
@@ -159,6 +173,13 @@ Demonstrates:
 ### 4. AI Agent Memory & Sessions (`04_ai_agent_memory.py`)
 Demonstrates:
 - Building a stateful memory and session layer for AI agents using KV facts and JSON conversation logs
+
+### 5. Live Events & CDC Streaming (`05_cdc_live_events.py`)
+Demonstrates:
+- Subscribing to real-time database mutations over HTTP SSE via `client.watch()`
+- Filtering CDC events by namespace across KV, JSON, Graph, and FTS models
+- Live state synchronization for autonomous AI agents and cache invalidation
+- Graceful subscription management with `.unsubscribe()`
 
 
 

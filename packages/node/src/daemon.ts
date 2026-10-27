@@ -2,13 +2,29 @@ import { readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import { decode, encode } from "@msgpack/msgpack";
-import { LiliaError, type BatchOperation, type JsonEntry, type KvEntry, type MutationResult, type SqlQueryResult } from "./types.js";
+import {
+  LiliaError,
+  type BatchOperation,
+  type DatabaseEvent,
+  type FtsHit,
+  type GraphDirection,
+  type JsonEntry,
+  type KvEntry,
+  type MutationResult,
+  type SqlQueryResult,
+  type WatchSubscription,
+} from "./types.js";
 import { checkedVersion, checkedExpiry, readVersion, jsonNumbers } from "./version.js";
-import { mapSqlQueryResult } from "./native.js";
+import { mapDatabaseEvent, mapSqlQueryResult } from "./native.js";
 
 interface WireResponse { id: string; result: { Ok?: unknown; Err?: { message: string; code: string; retryable: boolean; request_id: string | Uint8Array } } }
 
 export class DaemonClient {
+  private activeSocket?: Socket;
+  private socketBuffer = Buffer.alloc(0);
+  private readonly pendingCalls = new Map<string, { resolve: (resp: WireResponse) => void; reject: (err: Error) => void }>();
+  private connecting?: Promise<Socket>;
+
   private constructor(private readonly endpoint: string, private readonly token: string) {}
 
   static async open(endpoint: string, tokenFile: string): Promise<DaemonClient> {
@@ -39,16 +55,170 @@ export class DaemonClient {
     const raw = (await this.call({ type: "sql_query", sql, params })) as Record<string, unknown>;
     return mapSqlQueryResult(raw);
   }
-  close(_timeoutMs?: number): Promise<void> { return Promise.resolve(); }
-
-  private async call(operation: Record<string, unknown>): Promise<unknown> {
+  async graphNeighbors(graph: string, node: string, direction?: GraphDirection, kind?: string): Promise<string[]> {
+    return ((await this.call({ type: "graph_neighbors", graph, node, direction: direction ?? "outgoing", kind })) as string[]) ?? [];
+  }
+  async graphReachability(graph: string, startNodes: string[], direction?: GraphDirection): Promise<string[]> {
+    return ((await this.call({ type: "graph_reachability", graph, start_nodes: startNodes, direction: direction ?? "outgoing" })) as string[]) ?? [];
+  }
+  async ftsSearch(collection: string, query: string, limit?: number): Promise<FtsHit[]> {
+    const hits = (await this.call({ type: "fts_search", collection, query, limit: limit ?? 10 })) as Array<Record<string, unknown>>;
+    return (hits ?? []).map(h => ({
+      collection: String(h.collection),
+      docId: String(h.doc_id),
+      snippet: String(h.snippet),
+      rank: Number(h.rank),
+    }));
+  }
+  async watch(
+    namespace: string | undefined,
+    callback: (event: DatabaseEvent) => void
+  ): Promise<WatchSubscription> {
     const socket = connect(this.endpoint);
     await new Promise<void>((resolve, reject) => socket.once("connect", resolve).once("error", reject));
-    const payload = encode({ id: randomUUID(), token: this.token, deadline_ms: 5_000, operation }, { useBigInt64: true });
+    const payload = encode(
+      { id: randomUUID(), token: this.token, operation: { type: "subscribe", namespace } },
+      { useBigInt64: true }
+    );
     const header = Buffer.allocUnsafe(4);
     header.writeUInt32BE(payload.byteLength);
-    socket.end(Buffer.concat([header, Buffer.from(payload)]));
-    const response = await receive(socket);
+    socket.write(Buffer.concat([header, Buffer.from(payload)]));
+
+    let buffer = Buffer.alloc(0);
+
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const length = buffer.readUInt32BE(0);
+        if (buffer.length < 4 + length) {
+          break;
+        }
+        const frameData = buffer.subarray(4, 4 + length);
+        buffer = buffer.subarray(4 + length);
+        try {
+          const wire = decode(frameData, { useBigInt64: true }) as WireResponse;
+          if (wire.result.Err) {
+            break;
+          }
+          if (wire.result.Ok) {
+            const rawVal = wire.result.Ok as Record<string, unknown>;
+            if (rawVal && typeof rawVal === "object" && rawVal.type === "event" && rawVal.value) {
+              const event = mapDatabaseEvent(rawVal.value);
+              if (event) {
+                callback(event);
+              }
+            } else if (rawVal && typeof rawVal === "object" && rawVal.type !== "ack") {
+              const event = mapDatabaseEvent(rawVal);
+              if (event) {
+                callback(event);
+              }
+            }
+          }
+        } catch {}
+      }
+    });
+
+    const sub = (() => {
+      socket.destroy();
+    }) as WatchSubscription;
+    sub.unsubscribe = () => {
+      socket.destroy();
+    };
+    return sub;
+  }
+
+  close(_timeoutMs?: number): Promise<void> {
+    if (this.activeSocket) {
+      this.activeSocket.destroy();
+      this.activeSocket = undefined;
+    }
+    for (const pending of this.pendingCalls.values()) {
+      pending.reject(
+        new LiliaError({
+          code: "CLOSED",
+          message: "daemon client connection closed",
+          retryable: false,
+          request_id: randomUUID(),
+        })
+      );
+    }
+    this.pendingCalls.clear();
+    return Promise.resolve();
+  }
+
+  private async getSocket(): Promise<Socket> {
+    if (this.activeSocket && !this.activeSocket.destroyed) {
+      return this.activeSocket;
+    }
+    if (this.connecting) return this.connecting;
+
+    this.connecting = new Promise<Socket>((resolve, reject) => {
+      const socket = connect(this.endpoint);
+      socket.once("connect", () => {
+        this.activeSocket = socket;
+        this.socketBuffer = Buffer.alloc(0);
+        this.connecting = undefined;
+        resolve(socket);
+      });
+      socket.once("error", (err) => {
+        this.connecting = undefined;
+        reject(err);
+      });
+      socket.on("data", (chunk: Buffer) => {
+        this.socketBuffer = Buffer.concat([this.socketBuffer, chunk]);
+        while (this.socketBuffer.length >= 4) {
+          const length = this.socketBuffer.readUInt32BE(0);
+          if (this.socketBuffer.length < 4 + length) {
+            break;
+          }
+          const frameData = this.socketBuffer.subarray(4, 4 + length);
+          this.socketBuffer = this.socketBuffer.subarray(4 + length);
+          try {
+            const wire = decode(frameData, { useBigInt64: true }) as WireResponse;
+            const handler = this.pendingCalls.get(wire.id);
+            if (handler) {
+              this.pendingCalls.delete(wire.id);
+              handler.resolve(wire);
+            }
+          } catch {
+            // Drop unparseable frame
+          }
+        }
+      });
+      socket.on("close", () => {
+        if (this.activeSocket === socket) {
+          this.activeSocket = undefined;
+        }
+        for (const [id, pending] of this.pendingCalls.entries()) {
+          this.pendingCalls.delete(id);
+          pending.reject(new Error("socket closed unexpectedly"));
+        }
+      });
+    });
+
+    return this.connecting;
+  }
+
+  private async call(operation: Record<string, unknown>): Promise<unknown> {
+    const socket = await this.getSocket();
+    const id = randomUUID();
+    const payload = encode(
+      { id, token: this.token, deadline_ms: 5_000, operation },
+      { useBigInt64: true }
+    );
+    const header = Buffer.allocUnsafe(4);
+    header.writeUInt32BE(payload.byteLength);
+
+    const response = await new Promise<WireResponse>((resolve, reject) => {
+      this.pendingCalls.set(id, { resolve, reject });
+      socket.write(Buffer.concat([header, Buffer.from(payload)]), (err) => {
+        if (err) {
+          this.pendingCalls.delete(id);
+          reject(err);
+        }
+      });
+    });
+
     if (response.result.Err) {
       const error = response.result.Err;
       throw new LiliaError({ ...error, request_id: uuidString(error.request_id) });
@@ -86,6 +256,13 @@ function toWire(operation: BatchOperation): Record<string, unknown> {
     const expiry = checkedExpiry(operation.expiresAtMs);
     result.expires_at_ms = expiry === undefined ? undefined : BigInt(expiry);
     delete result.expiresAtMs;
+  }
+  if (operation.model === "graph_set_node") {
+    result.metadata = operation.metadata ?? {};
+  }
+  if (operation.model === "fts_index" || operation.model === "fts_delete") {
+    result.doc_id = operation.docId;
+    delete result.docId;
   }
   return result;
 }

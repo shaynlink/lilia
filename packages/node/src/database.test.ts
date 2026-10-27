@@ -96,6 +96,92 @@ test("daemon KV and JSON conformance", { skip: !daemonBinary }, async () => {
   }
 });
 
+test("embedded db.watch receives live CDC events filtered by namespace", { skip: !nativePath }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lilia-watch-emb-"));
+  const path = join(directory, "watch_emb.lilia");
+  try {
+    const db = await Database.open({ path });
+    const events: any[] = [];
+    const sub = await db.watch("orders", (event) => {
+      events.push(event);
+    });
+
+    const enc = new TextEncoder();
+    // Non-matching mutation
+    await db.kv.set("inventory", enc.encode("item_1"), enc.encode("in_stock"));
+
+    // Matching mutations
+    await db.kv.set("orders", enc.encode("ord_1"), enc.encode("paid"));
+    await db.json.put("orders", "doc_1", { status: "pending" });
+
+    // Wait a brief moment for events to dispatch
+    for (let i = 0; i < 20; i++) {
+      if (events.length >= 2) break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+
+    assert.equal(events.length, 2);
+    assert.equal(events[0].type, "kv_mutated");
+    assert.equal(events[0].namespace, "orders");
+    assert.equal(new TextDecoder().decode(events[0].key), "ord_1");
+    assert.equal(events[1].type, "json_mutated");
+    assert.equal(events[1].space, "orders");
+    assert.equal(events[1].id, "doc_1");
+
+    await sub.unsubscribe();
+    await db.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("daemon db.watch receives live CDC events over binary IPC", { skip: !daemonBinary }, async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "l-w-")));
+  const path = join(directory, "d.lilia");
+  const endpoint = process.platform === "win32" ? `\\\\.\\pipe\\liliadb-watch-${process.pid}` : `${path}.sock`;
+  const tokenFile = process.platform === "win32" ? join(directory, "ipc", "token") : `${path}.token`;
+  let daemon: ChildProcess | undefined;
+  try {
+    daemon = spawn(daemonBinary!, ["--database", path, "--endpoint", endpoint, "--token-file", tokenFile], {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    await waitUntilReady(tokenFile, endpoint, daemon);
+
+    const db = await Database.open({ path, mode: "daemon", endpoint, tokenFile });
+    const events: any[] = [];
+    const sub = await db.watch("telemetry", (event) => {
+      events.push(event);
+    });
+
+    const enc = new TextEncoder();
+    // Non-matching write
+    await db.kv.set("logs", enc.encode("log_1"), enc.encode("info"));
+
+    // Matching writes
+    await db.kv.set("telemetry", enc.encode("sensor_1"), enc.encode("24.5"));
+    await db.json.put("telemetry", "metric_1", { cpu: 85 });
+
+    for (let i = 0; i < 20; i++) {
+      if (events.length >= 2) break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+
+    assert.equal(events.length, 2);
+    assert.equal(events[0].type, "kv_mutated");
+    assert.equal(events[0].namespace, "telemetry");
+    assert.equal(new TextDecoder().decode(events[0].key), "sensor_1");
+    assert.equal(events[1].type, "json_mutated");
+    assert.equal(events[1].space, "telemetry");
+    assert.equal(events[1].id, "metric_1");
+
+    await sub.unsubscribe();
+    await db.close();
+  } finally {
+    daemon?.kill();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function conformance(mode: DatabaseMode, path: string, endpoint?: string, tokenFile?: string): Promise<void> {
   const database = await Database.open({ path, mode, endpoint, tokenFile,
     checkpointPolicy: mode === "embedded" ? { walBytes: 4096, intervalMs: 25 } : undefined });
@@ -165,6 +251,21 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
       database.sql.query("SELECT * FROM non_existent_table"),
       (error: unknown) => error instanceof LiliaError || error instanceof Error,
     );
+
+    // Verify Graph
+    await database.graph.setNode("workspace", "nodeA", "service", { env: "prod" });
+    await database.graph.setNode("workspace", "nodeB", "database");
+    await database.graph.addEdge("workspace", "nodeA", "nodeB", "depends_on");
+    const neighbors = await database.graph.neighbors("workspace", "nodeA", { direction: "outgoing" });
+    assert.deepEqual(neighbors, ["nodeB"]);
+    const reachable = await database.graph.reachability("workspace", ["nodeA"], { direction: "outgoing" });
+    assert.deepEqual(reachable, ["nodeA", "nodeB"]);
+
+    // Verify FTS
+    await database.fts.index("articles", "art1", "hello world search in liliadb");
+    const hits = await database.fts.search("articles", "world");
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0]?.docId, "art1");
 
     assert.equal(await database.integrityCheck(), true);
   } finally {

@@ -23,7 +23,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "bench": "node -e \"console.log('benchmark harness pending calibrated runner')\"",
+    "bench": "node dist/benchmarks/runner.js",
+    "bench:full": "node dist/benchmarks/runner.js --workload all",
     "package": "pnpm pack --pack-destination ../../dist"
   },
   "dependencies": { "@msgpack/msgpack": "3.1.2" },
