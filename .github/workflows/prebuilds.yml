@@ -1,0 +1,63 @@
+name: prebuilds
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target architecture (leave empty for all)"
+        required: false
+        default: "all"
+
+permissions:
+  contents: read
+
+jobs:
+  prebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            package: node-darwin-arm64
+            artifact: darwin-arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            package: node-darwin-x64
+            artifact: darwin-x64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            package: node-linux-x64-gnu
+            artifact: linux-x64-gnu
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            package: node-win32-x64-msvc
+            artifact: win32-x64-msvc
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            package: node-linux-arm64-gnu
+            artifact: linux-arm64-gnu
+    runs-on: ${{ matrix.runner }}
+    if: inputs.target == 'all' || inputs.target == matrix.target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+        with:
+          targets: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and stage prebuild
+        shell: bash
+        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --dest release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.artifact }}
+          path: |
+            release/*
+            packages/${{ matrix.package }}/*.node

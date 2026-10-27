@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ["v*.*.*-alpha.*"]
+    tags: ["v*.*.*-alpha.*", "v*.*.*"]
 
 permissions:
   contents: write
@@ -54,41 +54,56 @@ jobs:
       matrix:
         include:
           - runner: macos-15
+            target: aarch64-apple-darwin
             package: node-darwin-arm64
             artifact: darwin-arm64
           - runner: macos-15-intel
+            target: x86_64-apple-darwin
             package: node-darwin-x64
             artifact: darwin-x64
           - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             package: node-linux-arm64-gnu
             artifact: linux-arm64-gnu
           - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
             package: node-linux-x64-gnu
             artifact: linux-x64-gnu
           - runner: windows-2025
+            target: x86_64-pc-windows-msvc
             package: node-win32-x64-msvc
             artifact: win32-x64-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91.1
+        with:
+          targets: ${{ matrix.target }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.5.2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cargo build -p lilia-node-native -p lilia-cli -p lilia-daemon -p lilia-mcp --release
-      - name: Stage native package
+      - run: cargo build --target ${{ matrix.target }} -p lilia-node-native -p lilia-cli -p lilia-daemon -p lilia-mcp --release
+      - name: Build and stage prebuild package
+        shell: bash
+        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --dest "$GITHUB_WORKSPACE/release"
+      - name: Archive standalone CLI and Daemon binaries
         shell: bash
         run: |
-          mkdir -p "packages/${{ matrix.package }}"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then cp target/release/lilia_node_native.dll "packages/${{ matrix.package }}/lilia_node_native.node"; fi
-          if [[ "$RUNNER_OS" == "macOS" ]]; then cp target/release/liblilia_node_native.dylib "packages/${{ matrix.package }}/lilia_node_native.node"; fi
-          if [[ "$RUNNER_OS" == "Linux" ]]; then cp target/release/liblilia_node_native.so "packages/${{ matrix.package }}/lilia_node_native.node"; fi
-      - name: Pack native package
-        shell: bash
-        run: mkdir -p release && pnpm --dir "packages/${{ matrix.package }}" pack --pack-destination "$GITHUB_WORKSPACE/release"
+          mkdir -p bin-archive
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp "target/${{ matrix.target }}/release/lilia.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia.exe" bin-archive/
+            cp "target/${{ matrix.target }}/release/lilia-daemon.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia-daemon.exe" bin-archive/
+            cp "target/${{ matrix.target }}/release/lilia-mcp.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia-mcp.exe" bin-archive/
+            tar -czf "$GITHUB_WORKSPACE/release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
+          else
+            cp "target/${{ matrix.target }}/release/lilia" bin-archive/ 2>/dev/null || cp "target/release/lilia" bin-archive/
+            cp "target/${{ matrix.target }}/release/lilia-daemon" bin-archive/ 2>/dev/null || cp "target/release/lilia-daemon" bin-archive/
+            cp "target/${{ matrix.target }}/release/lilia-mcp" bin-archive/ 2>/dev/null || cp "target/release/lilia-mcp" bin-archive/
+            tar -czf "$GITHUB_WORKSPACE/release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -113,10 +128,20 @@ jobs:
           version: 11.5.2
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
+      - name: Publish Platform Prebuilds
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in packages/node-*; do
+            if [ -f "$pkg/package.json" ]; then
+              echo "Publishing $pkg..."
+              pnpm --dir "$pkg" publish --no-git-checks --access public --provenance || true
+            fi
+          done
       - name: Publish SDK
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm --filter @liliadb/node publish --no-git-checks --provenance
+        run: pnpm --filter @liliadb/node publish --no-git-checks --access public --provenance
       - name: Release archives
         env:
           GH_TOKEN: ${{ github.token }}
