@@ -1,6 +1,6 @@
 {
   "name": "@liliadb/node-darwin-arm64",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "LiliaDB Node-API native binary for macOS arm64",
   "os": ["darwin"],
   "cpu": ["arm64"],

@@ -1,6 +1,6 @@
 {
   "name": "@liliadb/workspace",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.5.2",
@@ -13,6 +13,7 @@
     "lint": "nx run-many -t lint",
     "bench": "nx run-many -t bench",
     "graph": "nx graph",
+    "prebuild": "node ./tools/build-prebuilds.mjs",
     "lilia": "cargo run -p lilia-cli --"
   },
   "devDependencies": {

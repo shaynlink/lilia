@@ -2,11 +2,38 @@ node_modules/
 /target/
 /.nx/
 dist/
+release/
+
+# Databases and WAL files
 *.lilia
 *.lilia-shm
 *.lilia-wal
+.lilia-backup-*
+
+# IPC and security tokens
 *.sock
 *.token
-*.node
-.DS_Store
 *.asc
+
+# Node-API native prebuild binaries
+*.node
+
+# Test staging and handshake flags
+*.staged
+*.ready
+*.confirmed
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+.venv/
