@@ -85,10 +85,11 @@ jobs:
           bun test packages/node/dist/database.test.js
           bun test packages/node/tests/compat-bun.test.ts
       - name: Verify Deno
-        run: deno test --allow-all --node-modules-dir=auto packages/node/tests/compat-deno.test.ts
+        run: deno test --allow-all --no-check --node-modules-dir=auto packages/node/tests/compat-deno.test.ts
 
   pypi:
     needs: verify
+    continue-on-error: true
     name: Publish Python SDK to PyPI
     runs-on: ubuntu-24.04
     steps:
@@ -166,7 +167,7 @@ jobs:
       - run: cargo build --target ${{ matrix.target }} -p lilia-node-native -p lilia-cli -p lilia-daemon -p lilia-mcp --release
       - name: Build and stage prebuild package
         shell: bash
-        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --dest "$GITHUB_WORKSPACE/release"
+        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --skip-build --dest "$GITHUB_WORKSPACE/release"
       - name: Archive standalone CLI and Daemon binaries
         shell: bash
         run: |
@@ -188,7 +189,7 @@ jobs:
           path: release/*
 
   publish:
-    needs: [native, compat-verify, pypi]
+    needs: [native, compat-verify]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

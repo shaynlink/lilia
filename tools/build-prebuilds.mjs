@@ -61,6 +61,7 @@ function parseArgs() {
   let target = null;
   let pack = false;
   let dest = null;
+  let skipBuild = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--target" && i + 1 < args.length) {
@@ -69,15 +70,17 @@ function parseArgs() {
       pack = true;
     } else if (args[i] === "--dest" && i + 1 < args.length) {
       dest = args[++i];
+    } else if (args[i] === "--skip-build") {
+      skipBuild = true;
     }
   }
 
-  return { target: target || detectHostTarget(), pack, dest };
+  return { target: target || detectHostTarget(), pack, dest, skipBuild };
 }
 
 function main() {
   const rootDir = resolve(new URL("..", import.meta.url).pathname);
-  const { target, pack, dest } = parseArgs();
+  const { target, pack, dest, skipBuild } = parseArgs();
 
   const config = TARGET_MAP[target];
   if (!config) {
@@ -86,19 +89,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log(`=== Building LiliaDB prebuild for ${target} ===`);
-  const hostTarget = detectHostTarget();
-  const isCross = target !== hostTarget;
-
-  // Build release binary
-  const buildCmd = isCross
-    ? `cargo build -p lilia-node-native --release --target ${target}`
-    : `cargo build -p lilia-node-native --release`;
-
-  console.log(`> ${buildCmd}`);
-  execSync(buildCmd, { cwd: rootDir, stdio: "inherit" });
-
-  // Locate output binary
+  // Locate output binary first
   const candidatePaths = [
     join(rootDir, "target", target, "release", config.libName),
     join(rootDir, "target", "release", config.libName),
@@ -109,6 +100,27 @@ function main() {
     if (existsSync(candidate)) {
       sourceLib = candidate;
       break;
+    }
+  }
+
+  if (!sourceLib && !skipBuild) {
+    console.log(`=== Building LiliaDB prebuild for ${target} ===`);
+    const hostTarget = detectHostTarget();
+    const isCross = target !== hostTarget;
+
+    // Build release binary
+    const buildCmd = isCross
+      ? `cargo build -p lilia-node-native --release --target ${target}`
+      : `cargo build -p lilia-node-native --release`;
+
+    console.log(`> ${buildCmd}`);
+    execSync(buildCmd, { cwd: rootDir, stdio: "inherit", shell: true });
+
+    for (const candidate of candidatePaths) {
+      if (existsSync(candidate)) {
+        sourceLib = candidate;
+        break;
+      }
     }
   }
 
@@ -154,6 +166,7 @@ function main() {
     execSync(`pnpm --dir "${targetPkgDir}" pack --pack-destination "${packDest}"`, {
       cwd: rootDir,
       stdio: "inherit",
+      shell: true,
     });
   }
 
