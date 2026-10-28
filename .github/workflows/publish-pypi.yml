@@ -1,8 +1,6 @@
 name: publish-pypi
 
 on:
-  push:
-    tags: ["v*.*.*", "v*.*.*-alpha.*"]
   workflow_dispatch:
 
 permissions:

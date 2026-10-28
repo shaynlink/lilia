@@ -1,6 +1,6 @@
 {
   "name": "@liliadb/node",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Local-first multimodel database for Node.js",
   "license": "Apache-2.0",
   "type": "module",

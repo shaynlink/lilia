@@ -121,6 +121,8 @@ pub(crate) fn prepare_parent(path: &Path) -> Result<()> {
         fs::create_dir_all(parent)
             .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     }
+    lilia_core::sync_directory(parent)
+        .map_err(|error| LiliaError::new(ErrorCode::Io, error.to_string(), false))?;
     Ok(())
 }
 

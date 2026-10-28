@@ -4,7 +4,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::storage::{normalize_limit, row_version, validate_name};
 use crate::Database;
-use lilia_core::{ErrorCode, JsonEntry, LiliaError, Result};
+use lilia_core::{ErrorCode, JsonEntry, JsonIndexInfo, LiliaError, Result};
 
 fn decode_json_value(
     encoded: &str,
@@ -30,6 +30,43 @@ fn decode_json_value(
     }
     serde_json::from_str(encoded)
         .map_err(|error| LiliaError::new(ErrorCode::Storage, error.to_string(), false))
+}
+
+fn doc_matches_query(
+    doc: &serde_json::Value,
+    query: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    for (k, expected_v) in query {
+        let actual_v = if let Some(direct) = doc.get(k) {
+            Some(direct)
+        } else {
+            let ptr = if let Some(stripped) = k.strip_prefix("$.") {
+                format!("/{}", stripped.replace('.', "/"))
+            } else if k.contains('.') {
+                format!("/{}", k.replace('.', "/"))
+            } else if k.starts_with('/') {
+                k.clone()
+            } else {
+                format!("/{k}")
+            };
+            doc.pointer(&ptr)
+        };
+
+        if let Some(actual) = actual_v {
+            if actual == expected_v {
+                continue;
+            }
+            if let serde_json::Value::Array(items) = actual {
+                if items.iter().any(|item| item == expected_v) {
+                    continue;
+                }
+            }
+            return false;
+        } else if !expected_v.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 impl Database {
@@ -129,24 +166,76 @@ impl Database {
             json_path.to_owned()
         };
         let mut ins = tx.prepare(
-            "INSERT INTO _lilia_json_index_entries(space, index_name, idx_value, doc_id) VALUES(?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO _lilia_json_index_entries(space, index_name, idx_value, doc_id) VALUES(?1, ?2, ?3, ?4)",
         )?;
         for (doc_id, encoded) in entries {
             let decoded = decode_json_value(&encoded, self.codec.as_ref())?;
             if let Some(target_val) = decoded.pointer(&path) {
-                let val_str = match target_val {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    serde_json::Value::Null => "null".to_string(),
-                    _ => target_val.to_string(),
-                };
-                ins.execute(params![space, index_name, val_str, doc_id])?;
+                if let serde_json::Value::Array(items) = target_val {
+                    for item in items {
+                        let val_str = match item {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Null => "null".to_string(),
+                            _ => item.to_string(),
+                        };
+                        ins.execute(params![space, index_name, val_str, doc_id])?;
+                    }
+                } else {
+                    let val_str = match target_val {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Null => "null".to_string(),
+                        _ => target_val.to_string(),
+                    };
+                    ins.execute(params![space, index_name, val_str, doc_id])?;
+                }
             }
         }
         drop(ins);
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn drop_json_index(&self, space: &str, index_name: &str) -> Result<bool> {
+        validate_name("space", space)?;
+        validate_name("index_name", index_name)?;
+        let mut writer = self.lock_writer()?;
+        let tx = writer.transaction()?;
+        let deleted = tx.execute(
+            "DELETE FROM _lilia_json_indexes WHERE space = ?1 AND index_name = ?2",
+            params![space, index_name],
+        )? > 0;
+        if deleted {
+            tx.execute(
+                "DELETE FROM _lilia_json_index_entries WHERE space = ?1 AND index_name = ?2",
+                params![space, index_name],
+            )?;
+        }
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    pub fn list_json_indexes(&self, space: &str) -> Result<Vec<JsonIndexInfo>> {
+        validate_name("space", space)?;
+        let connection = self.read_lock()?;
+        let mut statement = connection.prepare_cached(
+            "SELECT space, index_name, json_path FROM _lilia_json_indexes WHERE space = ?1 ORDER BY index_name",
+        )?;
+        let rows = statement.query_map([space], |row| {
+            Ok(JsonIndexInfo {
+                space: row.get(0)?,
+                index_name: row.get(1)?,
+                json_path: row.get(2)?,
+            })
+        })?;
+        let mut indexes = Vec::new();
+        for row in rows {
+            indexes.push(row?);
+        }
+        Ok(indexes)
     }
 
     pub fn json_scan_by_index(
@@ -235,5 +324,91 @@ impl Database {
             });
         }
         Ok(entries)
+    }
+
+    pub fn json_find(
+        &self,
+        space: &str,
+        query: &serde_json::Map<String, serde_json::Value>,
+        after_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<JsonEntry>> {
+        validate_name("space", space)?;
+        if query.is_empty() {
+            return self.json_scan(space, after_id, limit);
+        }
+
+        let max_results = usize::try_from(normalize_limit(limit)).unwrap_or(usize::MAX);
+        let indexes = self.list_json_indexes(space)?;
+
+        let matched_index = query.iter().find_map(|(k, v)| {
+            for idx in &indexes {
+                let matches_name = &idx.index_name == k;
+                let matches_exact_path = &idx.json_path == k;
+                let matches_prefixed = idx.json_path.strip_prefix("$.") == Some(k.as_str());
+                let matches_slash = idx.json_path.strip_prefix('/') == Some(k.as_str());
+                if matches_name || matches_exact_path || matches_prefixed || matches_slash {
+                    return Some((idx.clone(), v));
+                }
+            }
+            None
+        });
+
+        let mut results = Vec::new();
+        let mut cursor = after_id.map(ToOwned::to_owned);
+
+        if let Some((idx, target_val)) = matched_index {
+            let val_str = match target_val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Null => "null".to_string(),
+                _ => target_val.to_string(),
+            };
+
+            if query.len() == 1 {
+                return self.json_scan_by_index(space, &idx.index_name, &val_str, after_id, limit);
+            }
+
+            while results.len() < max_results {
+                let batch = self.json_scan_by_index(
+                    space,
+                    &idx.index_name,
+                    &val_str,
+                    cursor.as_deref(),
+                    100,
+                )?;
+                if batch.is_empty() {
+                    break;
+                }
+                for entry in batch {
+                    cursor = Some(entry.id.clone());
+                    if doc_matches_query(&entry.value, query) {
+                        results.push(entry);
+                        if results.len() == max_results {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            while results.len() < max_results {
+                let batch = self.json_scan(space, cursor.as_deref(), 100)?;
+                if batch.is_empty() {
+                    break;
+                }
+                for entry in batch {
+                    cursor = Some(entry.id.clone());
+                    if doc_matches_query(&entry.value, query) {
+                        results.push(entry);
+                        if results.len() == max_results {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 }

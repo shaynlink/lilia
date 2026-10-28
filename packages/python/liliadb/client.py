@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Union
 import urllib.parse
 import urllib.request
 
-from .models import BatchResult, DatabaseEvent, FtsHit, JsonDocument, KvEntry, SqlResult
+from .models import BatchResult, DatabaseEvent, FtsHit, JsonDocument, JsonIndexInfo, KvEntry, SqlResult
 from .transport import HttpTransport, Transport
 
 
@@ -344,6 +344,121 @@ class JsonClient:
     ) -> Union[WatchSubscription, Generator[DatabaseEvent, None, None]]:
         """Watches for live CDC events in this document space."""
         return _watch_stream(self._transport, namespace=space, callback=callback)
+
+    def create_index(
+        self,
+        space: str,
+        field_or_path: str,
+        name: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> None:
+        """Creates a secondary index on a document space."""
+        idx_name = name or field_or_path
+        if path is not None:
+            idx_path = path
+        elif field_or_path.startswith("$") or field_or_path.startswith("/"):
+            idx_path = field_or_path
+        else:
+            idx_path = f"$.{field_or_path}"
+
+        payload = {"space": space, "name": idx_name, "path": idx_path}
+        self._transport.request("POST", "/v1/json/indexes/create", payload)
+
+    def drop_index(self, space: str, name: str) -> bool:
+        """Drops a secondary index by name."""
+        payload = {"space": space, "name": name}
+        res = self._transport.request("POST", "/v1/json/indexes/drop", payload)
+        return bool(res.get("deleted", False))
+
+    def list_indexes(self, space: str) -> List[JsonIndexInfo]:
+        """Lists all secondary indexes defined on a document space."""
+        payload = {"space": space}
+        res = self._transport.request("POST", "/v1/json/indexes/list", payload)
+        indexes = res.get("indexes", [])
+        return [
+            JsonIndexInfo(
+                space=item["space"],
+                index_name=item["index_name"],
+                json_path=item["json_path"],
+            )
+            for item in indexes
+        ]
+
+    def find_by_index(
+        self,
+        space: str,
+        index_name: str,
+        value: Any,
+        after: Optional[str] = None,
+        limit: int = 100,
+    ) -> Generator[JsonDocument, None, None]:
+        """Scans documents matching an index value, automatically paginating."""
+        cursor = after
+        val_str = str(value) if not isinstance(value, bool) else ("true" if value else "false")
+        while True:
+            payload: Dict[str, Any] = {
+                "space": space,
+                "index_name": index_name,
+                "value": val_str,
+                "limit": limit,
+            }
+            if cursor is not None:
+                payload["after"] = cursor
+
+            res = self._transport.request("POST", "/v1/json/scan_by_index", payload)
+            docs = res.get("documents", [])
+            if not docs:
+                break
+
+            for item in docs:
+                doc = JsonDocument(
+                    space=item["space"],
+                    id=item["id"],
+                    value=item["value"],
+                    version=item["version"],
+                )
+                yield doc
+                cursor = doc.id
+
+            if len(docs) < limit:
+                break
+
+    def find(
+        self,
+        space: str,
+        query: Dict[str, Any],
+        after: Optional[str] = None,
+        limit: int = 100,
+    ) -> Generator[JsonDocument, None, None]:
+        """Queries documents matching a filter predicate with index acceleration and auto-pagination."""
+        cursor = after
+        while True:
+            payload: Dict[str, Any] = {
+                "space": space,
+                "query": query,
+                "limit": limit,
+            }
+            if cursor is not None:
+                payload["after"] = cursor
+
+            res = self._transport.request("POST", "/v1/json/find", payload)
+            docs = res.get("documents", [])
+            if not docs:
+                break
+
+            for item in docs:
+                doc = JsonDocument(
+                    space=item["space"],
+                    id=item["id"],
+                    value=item["value"],
+                    version=item["version"],
+                )
+                yield doc
+                cursor = doc.id
+
+            if len(docs) < limit:
+                break
+
 
 
 class GraphClient:

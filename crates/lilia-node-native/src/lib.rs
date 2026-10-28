@@ -223,6 +223,86 @@ impl NativeDatabase {
     }
 
     #[napi]
+    pub async fn json_create_index(&self, space: String, name: String, path: String) -> Result<()> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            database
+                .create_json_index(&space, &name, &path)
+                .map_err(napi_error)
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn json_drop_index(&self, space: String, name: String) -> Result<bool> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            database.drop_json_index(&space, &name).map_err(napi_error)
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn json_list_indexes(&self, space: String) -> Result<String> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let indexes = database.list_json_indexes(&space).map_err(napi_error)?;
+            serde_json::to_string(&indexes)
+                .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn json_scan_by_index(
+        &self,
+        space: String,
+        index_name: String,
+        value: String,
+        after: Option<String>,
+        limit: u32,
+    ) -> Result<String> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let entries = database
+                .json_scan_by_index(&space, &index_name, &value, after.as_deref(), limit)
+                .map_err(napi_error)?;
+            serde_json::to_string(&entries)
+                .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
+    pub async fn json_find(
+        &self,
+        space: String,
+        query_json: String,
+        after: Option<String>,
+        limit: u32,
+    ) -> Result<String> {
+        let database = Arc::clone(&self.inner);
+        tokio::task::spawn_blocking(move || {
+            let query_val: serde_json::Value = serde_json::from_str(&query_json)
+                .map_err(|e| Error::new(Status::InvalidArg, e.to_string()))?;
+            let query_map = query_val
+                .as_object()
+                .ok_or_else(|| Error::new(Status::InvalidArg, "query must be a JSON object"))?;
+            let entries = database
+                .json_find(&space, query_map, after.as_deref(), limit)
+                .map_err(napi_error)?;
+            serde_json::to_string(&entries)
+                .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    #[napi]
     pub async fn batch(&self, operations_json: String) -> Result<String> {
         let database = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || {

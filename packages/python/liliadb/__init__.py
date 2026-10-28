@@ -10,9 +10,9 @@ from .errors import (
     StorageError,
     TimeoutError,
 )
-from .models import BatchResult, DatabaseEvent, FtsHit, JsonDocument, KvEntry, SqlResult
+from .models import BatchResult, DatabaseEvent, FtsHit, JsonDocument, JsonIndexInfo, KvEntry, SqlResult
 
-__version__ = "0.1.0a2"
+__version__ = "0.1.0a3"
 
 __all__ = [
     "LiliaClient",
@@ -22,6 +22,7 @@ __all__ = [
     "FtsClient",
     "KvEntry",
     "JsonDocument",
+    "JsonIndexInfo",
     "SqlResult",
     "BatchResult",
     "FtsHit",

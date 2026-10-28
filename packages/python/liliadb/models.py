@@ -26,6 +26,16 @@ class JsonDocument:
 
 
 @dataclass(frozen=True)
+class JsonIndexInfo:
+    """Represents a secondary index registered on a JSON document space."""
+
+    space: str
+    index_name: str
+    json_path: str
+
+
+
+@dataclass(frozen=True)
 class SqlResult:
     """Represents the outcome of a declarative SQL query."""
 

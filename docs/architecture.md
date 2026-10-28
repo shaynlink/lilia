@@ -137,7 +137,9 @@ grant other principals rights to modify data, attributes, ACLs, ownership or chi
 deletion. This also prevents in-place junction conversion; delete sharing alone
 does not. Uninterpreted ACL entry types are refused.
 Tokens are staged with the private DACL before writing, synced, then renamed over
-an existing validated token. Hardlinks and nonregular entries are refused.
+an existing validated token, followed by an explicit metadata flush on the parent
+directory handle via `FILE_FLAG_BACKUP_SEMANTICS` and `FlushFileBuffers`. Hardlinks
+and nonregular entries are refused.
 
 Use a new private IPC subdirectory when migrating from earlier Windows builds.
 These guarantees exclude administrators with privilege overrides and hostile
@@ -153,15 +155,17 @@ existing files, directories, hard links and symlinks are rejected. Staging is in
 private sibling directory and is cleaned on normal success or failure. A process
 kill can leave an unpublished `.lilia-backup-*` directory for manual cleanup.
 Publication requires a local filesystem supporting hard links; unsupported
-filesystems return an error without deleting the destination. Unix publication
-also syncs the destination directory. A directory-sync failure can be reported
+filesystems return an error without deleting the destination. Publication
+also syncs the destination directory (on Unix via explicit `fsync` on the
+directory file descriptor; on Windows via `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS`
+and `FlushFileBuffers`). A directory-sync failure can be reported
 after the complete snapshot has become visible.
 
 Existing parent-directory permissions are preserved; newly created directories
 and snapshot files are user-only on both Unix (0700/0600) and Windows (current-user-only
 protected DACL `O:{sid}D:P(A;OICI;FA;;;{sid})` for directories, `O:{sid}D:P(A;;FA;;;{sid})` for files).
 Destination parent directories must be trusted and must not be concurrently replaced by an untrusted
-process; this is not a sandboxed path API. Windows directory durability (metadata flush) remains separate work.
+process; this is not a sandboxed path API. Windows directory durability (metadata flush) is enforced via explicit directory handle flushing.
 
 ## Writer admission
 

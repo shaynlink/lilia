@@ -84,6 +84,80 @@ fn test_secondary_indexing_and_prefix_scan() {
 }
 
 #[test]
+fn test_json_find_and_index_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open(DatabaseOptions::durable(dir.path().join("idx_find.lilia"))).unwrap();
+
+    // 1. Insert documents
+    db.batch(&[
+        BatchOperation::JsonPut {
+            space: "users".into(),
+            id: "u1".into(),
+            value: json!({ "name": "Alice", "role": "admin", "age": 30, "tags": ["rust", "db"] }),
+            if_version: None,
+        },
+        BatchOperation::JsonPut {
+            space: "users".into(),
+            id: "u2".into(),
+            value: json!({ "name": "Bob", "role": "viewer", "age": 25, "tags": ["js"] }),
+            if_version: None,
+        },
+        BatchOperation::JsonPut {
+            space: "users".into(),
+            id: "u3".into(),
+            value: json!({ "name": "Charlie", "role": "admin", "age": 35, "tags": ["db"] }),
+            if_version: None,
+        },
+    ])
+    .unwrap();
+
+    // 2. Query without index (fallback scan)
+    let mut q1 = serde_json::Map::new();
+    q1.insert("role".into(), json!("admin"));
+    let res1 = db.json_find("users", &q1, None, 10).unwrap();
+    assert_eq!(res1.len(), 2);
+    assert_eq!(res1[0].id, "u1");
+    assert_eq!(res1[1].id, "u3");
+
+    // 3. Create index on "role" and list indexes
+    db.create_json_index("users", "role", "$.role").unwrap();
+    let idxs = db.list_json_indexes("users").unwrap();
+    assert_eq!(idxs.len(), 1);
+    assert_eq!(idxs[0].index_name, "role");
+    assert_eq!(idxs[0].json_path, "$.role");
+
+    // 4. Query with index acceleration
+    let res2 = db.json_find("users", &q1, None, 10).unwrap();
+    assert_eq!(res2.len(), 2);
+    assert_eq!(res2[0].id, "u1");
+    assert_eq!(res2[1].id, "u3");
+
+    // 5. Multi-field query (index on role, filter on age)
+    let mut q2 = serde_json::Map::new();
+    q2.insert("role".into(), json!("admin"));
+    q2.insert("age".into(), json!(35));
+    let res3 = db.json_find("users", &q2, None, 10).unwrap();
+    assert_eq!(res3.len(), 1);
+    assert_eq!(res3[0].id, "u3");
+
+    // 6. Multikey array index test
+    db.create_json_index("users", "tags", "$.tags").unwrap();
+    let mut q3 = serde_json::Map::new();
+    q3.insert("tags".into(), json!("db"));
+    let res4 = db.json_find("users", &q3, None, 10).unwrap();
+    assert_eq!(res4.len(), 2);
+    assert_eq!(res4[0].id, "u1");
+    assert_eq!(res4[1].id, "u3");
+
+    // 7. Drop index
+    let dropped = db.drop_json_index("users", "role").unwrap();
+    assert!(dropped);
+    let idxs_after = db.list_json_indexes("users").unwrap();
+    assert_eq!(idxs_after.len(), 1);
+    assert_eq!(idxs_after[0].index_name, "tags");
+}
+
+#[test]
 fn test_graph_and_reachability() {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::open(DatabaseOptions::durable(

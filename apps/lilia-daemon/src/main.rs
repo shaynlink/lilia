@@ -485,6 +485,11 @@ fn operation_name(operation: &Operation) -> &'static str {
         Operation::KvScan { .. } => "kv_scan",
         Operation::JsonGet { .. } => "json_get",
         Operation::JsonScan { .. } => "json_scan",
+        Operation::JsonCreateIndex { .. } => "json_create_index",
+        Operation::JsonDropIndex { .. } => "json_drop_index",
+        Operation::JsonListIndexes { .. } => "json_list_indexes",
+        Operation::JsonScanByIndex { .. } => "json_scan_by_index",
+        Operation::JsonFind { .. } => "json_find",
         Operation::Batch { .. } => "batch",
         Operation::SqlQuery { .. } => "sql_query",
         Operation::GraphNeighbors { .. } => "graph_neighbors",
@@ -494,6 +499,7 @@ fn operation_name(operation: &Operation) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<ResponseValue> {
     Ok(match operation {
         Operation::Handshake { major, minor: _ } if major == PROTOCOL_MAJOR => {
@@ -539,6 +545,49 @@ fn dispatch(database: &Database, operation: Operation) -> lilia_core::Result<Res
             after,
             limit,
         } => ResponseValue::JsonPage(database.json_scan(&space, after.as_deref(), limit)?),
+        Operation::JsonCreateIndex { space, name, path } => {
+            database.create_json_index(&space, &name, &path)?;
+            ResponseValue::Ack
+        }
+        Operation::JsonDropIndex { space, name } => {
+            ResponseValue::IndexDropped(database.drop_json_index(&space, &name)?)
+        }
+        Operation::JsonListIndexes { space } => {
+            ResponseValue::JsonIndexes(database.list_json_indexes(&space)?)
+        }
+        Operation::JsonScanByIndex {
+            space,
+            index_name,
+            value,
+            after,
+            limit,
+        } => ResponseValue::JsonPage(database.json_scan_by_index(
+            &space,
+            &index_name,
+            &value,
+            after.as_deref(),
+            limit,
+        )?),
+        Operation::JsonFind {
+            space,
+            query,
+            after,
+            limit,
+        } => {
+            let query_map = query.as_object().ok_or_else(|| {
+                LiliaError::new(
+                    ErrorCode::InvalidInput,
+                    "query must be a JSON object",
+                    false,
+                )
+            })?;
+            ResponseValue::JsonPage(database.json_find(
+                &space,
+                query_map,
+                after.as_deref(),
+                limit,
+            )?)
+        }
         Operation::Batch { operations } => ResponseValue::Mutations(database.batch(&operations)?),
         Operation::SqlQuery { sql, params } => {
             ResponseValue::Sql(database.sql_query(&sql, &params)?)

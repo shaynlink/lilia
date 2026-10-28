@@ -6,6 +6,7 @@ import type {
   FtsHit,
   GraphDirection,
   JsonEntry,
+  JsonIndexInfo,
   JsonValue,
   KvEntry,
   MutationResult,
@@ -23,6 +24,11 @@ interface NativeDatabaseHandle {
   kvScan(namespace: string, after: Buffer | undefined, limit: number): Promise<NativeKvEntry[]>;
   jsonGet(space: string, id: string): Promise<string | null>;
   jsonScan(space: string, after: string | undefined, limit: number): Promise<string>;
+  jsonCreateIndex(space: string, name: string, path: string): Promise<void>;
+  jsonDropIndex(space: string, name: string): Promise<boolean>;
+  jsonListIndexes(space: string): Promise<string>;
+  jsonScanByIndex(space: string, indexName: string, value: string, after: string | undefined, limit: number): Promise<string>;
+  jsonFind(space: string, queryJson: string, after: string | undefined, limit: number): Promise<string>;
   batch(operations: string): Promise<string>;
   integrityCheck(): Promise<boolean>;
   backup(destination: string): Promise<void>;
@@ -61,6 +67,30 @@ export class EmbeddedClient {
 
   async jsonScan(space: string, after: string | undefined, limit: number): Promise<JsonEntry[]> {
     return (JSON.parse(await nativeCall(this.native.jsonScan(space, after, limit))) as Array<Record<string, unknown>>).map(mapJson);
+  }
+
+  async jsonCreateIndex(space: string, name: string, path: string): Promise<void> {
+    await nativeCall(this.native.jsonCreateIndex(space, name, path));
+  }
+
+  async jsonDropIndex(space: string, name: string): Promise<boolean> {
+    return nativeCall(this.native.jsonDropIndex(space, name));
+  }
+
+  async jsonListIndexes(space: string): Promise<JsonIndexInfo[]> {
+    const raw = await nativeCall(this.native.jsonListIndexes(space));
+    const list = JSON.parse(raw) as Array<{ space: string; index_name: string; json_path: string }>;
+    return list.map(item => ({ space: item.space, indexName: item.index_name, jsonPath: item.json_path }));
+  }
+
+  async jsonScanByIndex(space: string, indexName: string, value: string, after: string | undefined, limit: number): Promise<JsonEntry[]> {
+    const raw = await nativeCall(this.native.jsonScanByIndex(space, indexName, value, after, limit));
+    return (JSON.parse(raw) as Array<Record<string, unknown>>).map(mapJson);
+  }
+
+  async jsonFind(space: string, query: Record<string, JsonValue>, after: string | undefined, limit: number): Promise<JsonEntry[]> {
+    const raw = await nativeCall(this.native.jsonFind(space, JSON.stringify(query), after, limit));
+    return (JSON.parse(raw) as Array<Record<string, unknown>>).map(mapJson);
   }
 
   async batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> {

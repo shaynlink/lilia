@@ -123,6 +123,7 @@ const put = await db.json.put("customers", "cust_100", {
   name: "Grace Hopper",
   plan: "enterprise",
   credits: 5000,
+  tags: ["vip", "early-adopter"],
 }, { ifVersion: 0n });
 
 // Get document
@@ -131,6 +132,35 @@ console.log(doc?.value);
 
 // Scan documents
 const list = await db.json.scan("customers", { limit: 50 });
+
+// --- Dynamic Secondary Indexing ---
+
+// Create an index on a JSON field or path (backfills existing docs and auto-indexes multikey arrays)
+await db.json.createIndex("customers", "plan");
+await db.json.createIndex("customers", "email", { name: "idx_custom_email" });
+await db.json.createIndex("customers", "tags");
+
+// List indexes
+const indexes = await db.json.listIndexes("customers");
+console.log(indexes);
+
+// Find documents matching query criteria (auto-accelerated by index if available, with scan fallback)
+const enterpriseCustomers = await db.json.find("customers", { plan: "enterprise" }, { limit: 10 });
+
+// Find documents matching multikey array elements
+const vipCustomers = await db.json.find("customers", { tags: "vip" });
+
+// Stream search results with automatic pagination
+for await (const doc of db.json.findStream("customers", { plan: "enterprise" }, { batchSize: 50 })) {
+  console.log(doc.id, doc.value);
+}
+
+// Low-level index lookup by exact index name
+const results = await db.json.findByIndex("customers", "idx_custom_email", "grace@example.com");
+
+// Drop an index
+await db.json.dropIndex("customers", "idx_custom_email");
+
 ```
 
 ---

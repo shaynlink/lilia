@@ -242,7 +242,7 @@ fn update_json_indexes(
         return Ok(());
     }
     let mut insert_stmt = tx.prepare_cached(
-        "INSERT INTO _lilia_json_index_entries(space, index_name, idx_value, doc_id) VALUES(?1, ?2, ?3, ?4)",
+        "INSERT OR IGNORE INTO _lilia_json_index_entries(space, index_name, idx_value, doc_id) VALUES(?1, ?2, ?3, ?4)",
     )?;
     for (index_name, json_path) in indexes {
         let path = if let Some(stripped) = json_path.strip_prefix("$.") {
@@ -253,14 +253,27 @@ fn update_json_indexes(
             json_path.clone()
         };
         if let Some(target_val) = value.pointer(&path) {
-            let val_str = match target_val {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                serde_json::Value::Null => "null".to_string(),
-                _ => target_val.to_string(),
-            };
-            insert_stmt.execute(params![space, index_name, val_str, doc_id])?;
+            if let serde_json::Value::Array(items) = target_val {
+                for item in items {
+                    let val_str = match item {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Null => "null".to_string(),
+                        _ => item.to_string(),
+                    };
+                    insert_stmt.execute(params![space, index_name, val_str, doc_id])?;
+                }
+            } else {
+                let val_str = match target_val {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Null => "null".to_string(),
+                    _ => target_val.to_string(),
+                };
+                insert_stmt.execute(params![space, index_name, val_str, doc_id])?;
+            }
         }
     }
     Ok(())

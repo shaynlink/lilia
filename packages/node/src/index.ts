@@ -5,10 +5,13 @@ import { Readable } from "node:stream";
 import { LiliaError } from "./types.js";
 import type {
   BatchOperation,
+  CreateIndexOptions,
   DatabaseEvent,
   FtsHit,
   GraphDirection,
   JsonEntry,
+  JsonFindOptions,
+  JsonIndexInfo,
   JsonValue,
   KvEntry,
   MutationResult,
@@ -82,6 +85,48 @@ export class Database {
       this.jsonScanStream(space, options),
     createReadStream: (space: string, options: ScanStreamOptions<string> = {}): Readable =>
       Readable.from(this.jsonScanStream(space, options), { objectMode: true }),
+    createIndex: (
+      space: string,
+      fieldOrPath: string,
+      optionsOrPath?: string | CreateIndexOptions
+    ): Promise<void> => {
+      let name: string;
+      let path: string;
+      if (typeof optionsOrPath === "string") {
+        name = fieldOrPath;
+        path = optionsOrPath;
+      } else if (typeof optionsOrPath === "object" && optionsOrPath !== null) {
+        name = optionsOrPath.name ?? fieldOrPath;
+        path = optionsOrPath.path ?? (fieldOrPath.startsWith("$") || fieldOrPath.startsWith("/") ? fieldOrPath : `$.${fieldOrPath}`);
+      } else {
+        name = fieldOrPath;
+        path = fieldOrPath.startsWith("$") || fieldOrPath.startsWith("/") ? fieldOrPath : `$.${fieldOrPath}`;
+      }
+      return this.run(client => client.jsonCreateIndex(space, name, path));
+    },
+    dropIndex: (space: string, indexName: string): Promise<boolean> =>
+      this.run(client => client.jsonDropIndex(space, indexName)),
+    listIndexes: (space: string): Promise<JsonIndexInfo[]> =>
+      this.run(client => client.jsonListIndexes(space)),
+    findByIndex: (
+      space: string,
+      indexName: string,
+      value: string | number | boolean,
+      options: JsonFindOptions = {}
+    ): Promise<JsonEntry[]> =>
+      this.run(client => client.jsonScanByIndex(space, indexName, String(value), options.after, options.limit ?? 100)),
+    find: (
+      space: string,
+      query: Record<string, JsonValue>,
+      options: JsonFindOptions = {}
+    ): Promise<JsonEntry[]> =>
+      this.run(client => client.jsonFind(space, query, options.after, options.limit ?? 100)),
+    findStream: (
+      space: string,
+      query: Record<string, JsonValue>,
+      options: ScanStreamOptions<string> = {}
+    ): AsyncIterableIterator<JsonEntry> =>
+      this.jsonFindStream(space, query, options),
     watch: (space: string, callback: (event: DatabaseEvent) => void): Promise<WatchSubscription> =>
       this.watch(space, callback),
   };
@@ -189,6 +234,31 @@ export class Database {
     while (remaining > 0) {
       const fetchLimit = Math.min(batchSize, remaining);
       const batch = await this.run(client => client.jsonScan(space, cursor, fetchLimit));
+      if (batch.length === 0) {
+        break;
+      }
+      for (const entry of batch) {
+        yield entry;
+        remaining--;
+        if (remaining <= 0) {
+          break;
+        }
+      }
+      if (batch.length < fetchLimit) {
+        break;
+      }
+      cursor = batch[batch.length - 1]!.id;
+    }
+  }
+
+  private async *jsonFindStream(space: string, query: Record<string, JsonValue>, options: ScanStreamOptions<string>): AsyncIterableIterator<JsonEntry> {
+    const batchSize = Math.max(1, options.batchSize ?? 100);
+    let remaining = options.limit !== undefined ? Math.max(0, options.limit) : Infinity;
+    let cursor = options.after;
+
+    while (remaining > 0) {
+      const fetchLimit = Math.min(batchSize, remaining);
+      const batch = await this.run(client => client.jsonFind(space, query, cursor, fetchLimit));
       if (batch.length === 0) {
         break;
       }

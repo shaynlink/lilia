@@ -28,8 +28,12 @@ jobs:
           RELEASE_SIGNING_PUBLIC_KEY: ${{ secrets.RELEASE_SIGNING_PUBLIC_KEY }}
         run: |
           test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-          test -n "$RELEASE_SIGNING_PUBLIC_KEY"
-          printf '%s' "$RELEASE_SIGNING_PUBLIC_KEY" | gpg --import
+          if [ -f release-signing-public-key.asc ]; then
+            gpg --import release-signing-public-key.asc
+          fi
+          if [ -n "$RELEASE_SIGNING_PUBLIC_KEY" ]; then
+            printf '%s' "$RELEASE_SIGNING_PUBLIC_KEY" | gpg --import
+          fi
           git verify-tag "refs/tags/$GITHUB_REF_NAME"
       - uses: dtolnay/rust-toolchain@1.91.1
         with:
@@ -81,7 +85,7 @@ jobs:
           bun test packages/node/dist/database.test.js
           bun test packages/node/tests/compat-bun.test.ts
       - name: Verify Deno
-        run: deno test --allow-all packages/node/tests/compat-deno.test.ts
+        run: deno test --allow-all --node-modules-dir=auto packages/node/tests/compat-deno.test.ts
 
   pypi:
     needs: verify
@@ -103,8 +107,20 @@ jobs:
         run: python -m build packages/python
       - name: Verify package distributions
         run: twine check --strict packages/python/dist/*
-      - name: Publish to PyPI
+      - name: Publish to PyPI with Token
+        if: env.PYPI_API_TOKEN != ''
         uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          packages-dir: packages/python/dist/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Publish to PyPI via OIDC
+        if: env.PYPI_API_TOKEN == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         with:
           packages-dir: packages/python/dist/
           skip-existing: true
@@ -184,8 +200,24 @@ jobs:
         run: sha256sum release/* > release/SHA256SUMS
       - name: Update Homebrew formula with release checksums
         run: |
-          node tools/update-homebrew-formula.mjs --version "$GITHUB_REF_NAME" --dir release
-          cp Formula/liliadb.rb Formula/lilia.rb release/
+          node tools/update-homebrew-formula.mjs --version "$GITHUB_REF_NAME" --dir release --formula Formula/lilia.rb
+          cp Formula/lilia.rb Formula/liliadb.rb release/
+      - name: Sync Formula to Homebrew tap repository
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          rm -rf /tmp/tap-sync
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/shaynlink/homebrew-tap.git" /tmp/tap-sync 2>/dev/null || true
+          if [ -d /tmp/tap-sync ]; then
+            mkdir -p /tmp/tap-sync/Formula
+            cp Formula/lilia.rb /tmp/tap-sync/Formula/lilia.rb
+            cp Formula/liliadb.rb /tmp/tap-sync/Formula/liliadb.rb
+            cd /tmp/tap-sync
+            git add Formula/
+            git diff --staged --quiet || (git commit -m "chore(release): bump formula to $GITHUB_REF_NAME" && git push origin main)
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -198,17 +230,28 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for pkg in packages/node-*; do
-            if [ -f "$pkg/package.json" ]; then
-              echo "Publishing $pkg..."
-              pnpm --dir "$pkg" publish --no-git-checks --access public --provenance || true
+          for tgz in release/liliadb-node-*.tgz; do
+            if [ -f "$tgz" ]; then
+              echo "Publishing prebuild archive: $tgz..."
+              pnpm publish "$tgz" --no-git-checks --access public --tag latest || true
             fi
           done
       - name: Publish SDK
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm --filter @liliadb/node publish --no-git-checks --access public --provenance
+        run: |
+          for pkg in packages/node-*; do
+            pkg_name=$(basename "$pkg")
+            tgz="release/liliadb-${pkg_name}-"*.tgz
+            if ls $tgz 1> /dev/null 2>&1; then
+              tar -xzf $tgz -C "$pkg" --strip-components=1 package/lilia_node_native.node 2>/dev/null || true
+            fi
+          done
+          pnpm --filter @liliadb/node build
+          pnpm --filter @liliadb/node publish --no-git-checks --access public --tag latest --provenance
       - name: Release archives and formulas
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes
+        run: |
+          gh release view "$GITHUB_REF_NAME" 2>/dev/null && gh release delete "$GITHUB_REF_NAME" --yes 2>/dev/null || true
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

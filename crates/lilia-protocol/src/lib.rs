@@ -1,8 +1,8 @@
 use std::io;
 
 use lilia_core::{
-    BatchOperation, DatabaseEvent, Direction, FtsHit, JsonEntry, KvEntry, LiliaError,
-    MutationResult,
+    BatchOperation, DatabaseEvent, Direction, FtsHit, JsonEntry, JsonIndexInfo, KvEntry,
+    LiliaError, MutationResult,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -49,6 +49,31 @@ pub enum Operation {
     },
     JsonScan {
         space: String,
+        after: Option<String>,
+        limit: u32,
+    },
+    JsonCreateIndex {
+        space: String,
+        name: String,
+        path: String,
+    },
+    JsonDropIndex {
+        space: String,
+        name: String,
+    },
+    JsonListIndexes {
+        space: String,
+    },
+    JsonScanByIndex {
+        space: String,
+        index_name: String,
+        value: String,
+        after: Option<String>,
+        limit: u32,
+    },
+    JsonFind {
+        space: String,
+        query: serde_json::Value,
         after: Option<String>,
         limit: u32,
     },
@@ -101,6 +126,8 @@ pub enum ResponseValue {
     KvPage(Vec<KvEntry>),
     Json(Option<JsonEntry>),
     JsonPage(Vec<JsonEntry>),
+    JsonIndexes(Vec<JsonIndexInfo>),
+    IndexDropped(bool),
     Mutations(Vec<MutationResult>),
     Sql(lilia_core::SqlQueryResult),
     GraphNeighbors(Vec<String>),

@@ -267,6 +267,54 @@ async function conformance(mode: DatabaseMode, path: string, endpoint?: string, 
     assert.equal(hits.length, 1);
     assert.equal(hits[0]?.docId, "art1");
 
+    // Verify JSON Indexing & find
+    await database.json.put("users", "u1", { name: "Alice", role: "admin", level: 10, active: true });
+    await database.json.put("users", "u2", { name: "Bob", role: "member", level: 5, active: true });
+    await database.json.put("users", "u3", { name: "Charlie", role: "admin", level: 8, active: false });
+
+    // 1. find fallback without index
+    const adminsFallback = await database.json.find("users", { role: "admin" });
+    assert.equal(adminsFallback.length, 2);
+    assert.equal(adminsFallback[0]?.id, "u1");
+    assert.equal(adminsFallback[1]?.id, "u3");
+
+    // 2. createIndex
+    await database.json.createIndex("users", "role");
+    const indexes = await database.json.listIndexes("users");
+    assert.equal(indexes.length, 1);
+    assert.equal(indexes[0]?.indexName, "role");
+
+    // 3. find with index acceleration
+    const adminsIndexed = await database.json.find("users", { role: "admin" });
+    assert.equal(adminsIndexed.length, 2);
+    assert.equal(adminsIndexed[0]?.id, "u1");
+    assert.equal(adminsIndexed[1]?.id, "u3");
+
+    // 4. findByIndex
+    const members = await database.json.findByIndex("users", "role", "member");
+    assert.equal(members.length, 1);
+    assert.equal(members[0]?.id, "u2");
+
+    // 5. multi-condition find
+    const activeAdmins = await database.json.find("users", { role: "admin", active: true });
+    assert.equal(activeAdmins.length, 1);
+    assert.equal(activeAdmins[0]?.id, "u1");
+
+    // 6. findStream
+    const streamed: JsonEntry[] = [];
+    for await (const doc of database.json.findStream("users", { role: "admin" })) {
+      streamed.push(doc);
+    }
+    assert.equal(streamed.length, 2);
+    assert.equal(streamed[0]?.id, "u1");
+    assert.equal(streamed[1]?.id, "u3");
+
+    // 7. dropIndex
+    const dropped = await database.json.dropIndex("users", "role");
+    assert.equal(dropped, true);
+    const indexesAfter = await database.json.listIndexes("users");
+    assert.equal(indexesAfter.length, 0);
+
     assert.equal(await database.integrityCheck(), true);
   } finally {
     await database.close();

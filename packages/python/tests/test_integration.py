@@ -160,6 +160,43 @@ class TestLiveIntegration(unittest.TestCase):
         self.assertEqual(items[2]["title"], "Monitor")
         self.assertEqual(items[2]["stock"], 8)
 
+    def test_json_secondary_index_and_find(self):
+        # 1. Put documents
+        self.client.json.put("members", "m1", {"name": "Alice", "role": "admin", "active": True})
+        self.client.json.put("members", "m2", {"name": "Bob", "role": "viewer", "active": True})
+        self.client.json.put("members", "m3", {"name": "Charlie", "role": "admin", "active": False})
+
+        # 2. Find fallback (no index)
+        admins = list(self.client.json.find("members", {"role": "admin"}))
+        self.assertEqual(len(admins), 2)
+        self.assertEqual([d.id for d in admins], ["m1", "m3"])
+
+        # 3. Create index
+        self.client.json.create_index("members", "role")
+        indexes = self.client.json.list_indexes("members")
+        self.assertEqual(len(indexes), 1)
+        self.assertEqual(indexes[0].index_name, "role")
+
+        # 4. Find with index acceleration
+        admins_indexed = list(self.client.json.find("members", {"role": "admin"}))
+        self.assertEqual(len(admins_indexed), 2)
+        self.assertEqual([d.id for d in admins_indexed], ["m1", "m3"])
+
+        # 5. Multi-field find
+        active_admins = list(self.client.json.find("members", {"role": "admin", "active": True}))
+        self.assertEqual(len(active_admins), 1)
+        self.assertEqual(active_admins[0].id, "m1")
+
+        # 6. Find by index
+        viewers = list(self.client.json.find_by_index("members", "role", "viewer"))
+        self.assertEqual(len(viewers), 1)
+        self.assertEqual(viewers[0].id, "m2")
+
+        # 7. Drop index
+        self.assertTrue(self.client.json.drop_index("members", "role"))
+        indexes_after = self.client.json.list_indexes("members")
+        self.assertEqual(len(indexes_after), 0)
+
     def test_scan_auto_pagination(self):
         # Populate 15 items in a space
         for i in range(15):

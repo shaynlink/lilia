@@ -124,7 +124,7 @@ pub(crate) fn create_token(path: &Path) -> io::Result<String> {
     staging.as_file().sync_all()?;
     validate_token(&path)?;
     staging.persist(&path).map_err(|error| error.error)?;
-    fs::File::open(parent)?.sync_all()?;
+    lilia_core::sync_directory(parent)?;
     Ok(token)
 }
 

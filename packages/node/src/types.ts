@@ -31,6 +31,23 @@ export interface JsonEntry {
   version: bigint;
 }
 
+export interface JsonIndexInfo {
+  space: string;
+  indexName: string;
+  jsonPath: string;
+}
+
+export interface CreateIndexOptions {
+  name?: string;
+  path?: string;
+}
+
+export interface JsonFindOptions {
+  after?: string;
+  limit?: number;
+}
+
+
 export interface ScanStreamOptions<T = string | Uint8Array> {
   after?: T;
   limit?: number;

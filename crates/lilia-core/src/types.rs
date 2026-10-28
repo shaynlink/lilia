@@ -195,3 +195,10 @@ pub struct SqlQueryResult {
     pub rows: Vec<Vec<Value>>,
     pub rows_affected: u64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsonIndexInfo {
+    pub space: String,
+    pub index_name: String,
+    pub json_path: String,
+}

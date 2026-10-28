@@ -98,6 +98,45 @@ pub struct JsonScanRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct JsonCreateIndexRequest {
+    pub space: String,
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JsonDropIndexRequest {
+    pub space: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JsonListIndexesRequest {
+    pub space: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JsonScanByIndexRequest {
+    pub space: String,
+    pub index_name: String,
+    pub value: String,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JsonFindRequest {
+    pub space: String,
+    pub query: serde_json::Map<String, Value>,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct GraphNodeRequest {
     pub graph: String,
     pub id: String,
@@ -686,6 +725,164 @@ async fn json_scan_handler(
     })))
 }
 
+async fn json_create_index_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<JsonCreateIndexRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    tokio::task::spawn_blocking(move || {
+        db.create_json_index(&payload.space, &payload.name, &payload.path)
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn json_drop_index_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<JsonDropIndexRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let deleted =
+        tokio::task::spawn_blocking(move || db.drop_json_index(&payload.space, &payload.name))
+            .await
+            .map_err(|_| {
+                map_error(LiliaError::new(
+                    ErrorCode::Storage,
+                    "worker task failed",
+                    false,
+                ))
+            })?
+            .map_err(map_error)?;
+
+    Ok(Json(json!({ "ok": true, "deleted": deleted })))
+}
+
+async fn json_list_indexes_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<JsonListIndexesRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let db = state.database.clone();
+    let indexes = tokio::task::spawn_blocking(move || db.list_json_indexes(&payload.space))
+        .await
+        .map_err(|_| {
+            map_error(LiliaError::new(
+                ErrorCode::Storage,
+                "worker task failed",
+                false,
+            ))
+        })?
+        .map_err(map_error)?;
+
+    let formatted: Vec<Value> = indexes
+        .into_iter()
+        .map(|idx| {
+            json!({
+                "space": idx.space,
+                "index_name": idx.index_name,
+                "json_path": idx.json_path
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "ok": true, "indexes": formatted })))
+}
+
+async fn json_scan_by_index_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<JsonScanByIndexRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let limit = payload.limit.unwrap_or(100);
+    let db = state.database.clone();
+    let docs = tokio::task::spawn_blocking(move || {
+        db.json_scan_by_index(
+            &payload.space,
+            &payload.index_name,
+            &payload.value,
+            payload.after.as_deref(),
+            limit,
+        )
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    let formatted: Vec<Value> = docs
+        .iter()
+        .map(|d| {
+            json!({
+                "space": d.space,
+                "id": d.id,
+                "value": d.value,
+                "version": d.version.to_string()
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "ok": true,
+        "documents": formatted,
+        "count": formatted.len()
+    })))
+}
+
+async fn json_find_handler(
+    State(state): State<HttpState>,
+    Json(payload): Json<JsonFindRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let limit = payload.limit.unwrap_or(100);
+    let db = state.database.clone();
+    let docs = tokio::task::spawn_blocking(move || {
+        db.json_find(
+            &payload.space,
+            &payload.query,
+            payload.after.as_deref(),
+            limit,
+        )
+    })
+    .await
+    .map_err(|_| {
+        map_error(LiliaError::new(
+            ErrorCode::Storage,
+            "worker task failed",
+            false,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    let formatted: Vec<Value> = docs
+        .iter()
+        .map(|d| {
+            json!({
+                "space": d.space,
+                "id": d.id,
+                "value": d.value,
+                "version": d.version.to_string()
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "ok": true,
+        "documents": formatted,
+        "count": formatted.len()
+    })))
+}
+
 // Batch Handler
 #[allow(clippy::too_many_lines)]
 async fn batch_handler(
@@ -1122,6 +1319,11 @@ pub fn router(state: HttpState) -> Router {
         .route("/v1/json/put", post(json_put_handler))
         .route("/v1/json/delete", post(json_delete_handler))
         .route("/v1/json/scan", post(json_scan_handler))
+        .route("/v1/json/indexes/create", post(json_create_index_handler))
+        .route("/v1/json/indexes/drop", post(json_drop_index_handler))
+        .route("/v1/json/indexes/list", post(json_list_indexes_handler))
+        .route("/v1/json/scan_by_index", post(json_scan_by_index_handler))
+        .route("/v1/json/find", post(json_find_handler))
         // Graph
         .route("/v1/graph/node", post(graph_node_handler))
         .route("/v1/graph/edge", post(graph_edge_handler))

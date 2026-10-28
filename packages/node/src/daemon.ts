@@ -9,6 +9,8 @@ import {
   type FtsHit,
   type GraphDirection,
   type JsonEntry,
+  type JsonIndexInfo,
+  type JsonValue,
   type KvEntry,
   type MutationResult,
   type SqlQueryResult,
@@ -44,6 +46,28 @@ export class DaemonClient {
   }
   async jsonScan(space: string, after: string | undefined, limit: number): Promise<JsonEntry[]> {
     return ((await this.call({ type: "json_scan", space, after, limit })) as unknown[]).map(value => mapJson(value) as JsonEntry);
+  }
+  async jsonCreateIndex(space: string, name: string, path: string): Promise<void> {
+    await this.call({ type: "json_create_index", space, name, path });
+  }
+  async jsonDropIndex(space: string, name: string): Promise<boolean> {
+    return Boolean(await this.call({ type: "json_drop_index", space, name }));
+  }
+  async jsonListIndexes(space: string): Promise<JsonIndexInfo[]> {
+    const list = (await this.call({ type: "json_list_indexes", space })) as Array<{ space: string; index_name?: string; indexName?: string; json_path?: string; jsonPath?: string }>;
+    return (list ?? []).map(item => ({
+      space: item.space,
+      indexName: item.indexName ?? item.index_name ?? "",
+      jsonPath: item.jsonPath ?? item.json_path ?? "",
+    }));
+  }
+  async jsonScanByIndex(space: string, indexName: string, value: string, after: string | undefined, limit: number): Promise<JsonEntry[]> {
+    const list = (await this.call({ type: "json_scan_by_index", space, index_name: indexName, value, after, limit })) as unknown[];
+    return (list ?? []).map(value => mapJson(value) as JsonEntry);
+  }
+  async jsonFind(space: string, query: Record<string, JsonValue>, after: string | undefined, limit: number): Promise<JsonEntry[]> {
+    const list = (await this.call({ type: "json_find", space, query, after, limit })) as unknown[];
+    return (list ?? []).map(value => mapJson(value) as JsonEntry);
   }
   async batch(operations: readonly BatchOperation[]): Promise<MutationResult[]> {
     const result = await this.call({ type: "batch", operations: operations.map(toWire) }) as Array<{ version?: bigint | number | null; deleted: boolean }>;

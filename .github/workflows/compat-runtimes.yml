@@ -81,4 +81,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @liliadb/node build
       - name: Run Deno compatibility tests
-        run: deno test --allow-all packages/node/tests/compat-deno.test.ts
+        run: deno test --allow-all --node-modules-dir=auto packages/node/tests/compat-deno.test.ts

@@ -15,7 +15,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   let version = null;
   let releaseDir = "release";
-  let formulaPath = "Formula/liliadb.rb";
+  let formulaPath = "Formula/lilia.rb";
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--version" && i + 1 < args.length) {

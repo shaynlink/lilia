@@ -13,7 +13,10 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Component, Path, PathBuf};
 
-use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS};
+use windows_sys::Win32::Foundation::{
+    LocalFree, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, GENERIC_READ, GENERIC_WRITE,
+    INVALID_HANDLE_VALUE,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     ConvertStringSidToSidW, GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1,
@@ -25,7 +28,10 @@ use windows_sys::Win32::Security::{
     DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
     SECURITY_ATTRIBUTES, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER,
 };
-use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateDirectoryW, CreateFileW, FlushFileBuffers, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
@@ -182,6 +188,12 @@ pub fn create_dir_all_secure(path: &Path) -> io::Result<()> {
                 return Err(err);
             }
         }
+        if let Some(parent) = current.parent() {
+            if !parent.as_os_str().is_empty() {
+                sync_directory(parent)?;
+            }
+        }
+        sync_directory(&current)?;
     }
     Ok(())
 }
@@ -318,5 +330,78 @@ pub fn is_private_dacl(path: &Path) -> io::Result<bool> {
         }
 
         Ok(true)
+    }
+}
+
+/// Flushes directory metadata to disk using `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS`
+/// and `FlushFileBuffers`.
+pub fn sync_directory(path: &Path) -> io::Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path cannot be empty",
+        ));
+    }
+    let encoded = wide(path.as_os_str())?;
+
+    // SAFETY: Path is null-terminated UTF-16. CreateFileW is called with FILE_FLAG_BACKUP_SEMANTICS
+    // to open a directory handle, and OwnedHandle guarantees CloseHandle is called on drop.
+    unsafe {
+        let mut raw_handle = CreateFileW(
+            encoded.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        );
+
+        if raw_handle == INVALID_HANDLE_VALUE {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) {
+                raw_handle = CreateFileW(
+                    encoded.as_ptr(),
+                    GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    std::ptr::null(),
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+
+        if raw_handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+
+        let handle = OwnedHandle::from_raw_handle(raw_handle);
+        if FlushFileBuffers(handle.as_raw_handle()) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sync_directory_success_and_errors() {
+        let temp = std::env::temp_dir().join(format!("lilia-sync-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        assert!(sync_directory(&temp).is_ok());
+
+        // Empty path error
+        assert!(sync_directory(Path::new("")).is_err());
+
+        // Non-existent path error
+        let nonexistent = temp.join("does_not_exist");
+        assert!(sync_directory(&nonexistent).is_err());
+
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 }

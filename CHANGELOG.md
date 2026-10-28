@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-alpha.3] - 2026-10-28
+
+### Added
+- **Public Homebrew Tap**:
+  - Official public tap repository at `shaynlink/homebrew-tap` supporting `brew tap shaynlink/tap && brew install lilia` (and custom alias `brew tap liliadb/tap`).
+  - Automated formula synchronization with SHA256 checksums on release dispatch.
+- **Packaging & CI Hardening**:
+  - Direct npm publication of multi-platform native tarball prebuilds for macOS (arm64/x64), Linux (arm64/x64), and Windows MSVC.
+  - Dual PyPI authentication support (OIDC Trusted Publishing and API token fallback).
+  - Native Deno 2 auto node_modules resolution via `deno.json`.
+  - Windows chaos recovery permission handling.
+- **Daemon HTTP & Storage Enhancements**:
+  - Dedicated REST endpoints for batch, transactions, doctor, and live SSE event streams.
+
 ## [0.1.0-alpha.2] - 2026-10-27
 
 ### Added

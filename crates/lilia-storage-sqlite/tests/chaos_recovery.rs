@@ -655,6 +655,12 @@ fn test_enospc_backup_cleanup_and_isolation() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&read_only_dir, fs::Permissions::from_mode(0o400)).unwrap();
     }
+    #[cfg(windows)]
+    {
+        // On Windows, replace directory with a regular file so creating child staging directories fails with IO error
+        fs::remove_dir(&read_only_dir).unwrap();
+        fs::write(&read_only_dir, b"not_a_directory").unwrap();
+    }
 
     let backup_target = read_only_dir.join("snap.lilia");
     let res = db.backup(&backup_target);

@@ -287,6 +287,148 @@ curl -s -X POST http://127.0.0.1:4444/v1/json/scan \
 ]
 ```
 
+#### `POST /v1/json/indexes/create`
+Create a secondary index on a JSON field or path in a space. Backfills existing documents and maintains the index synchronously on future mutations.
+
+**Request:**
+```bash
+curl -s -X POST http://127.0.0.1:4444/v1/json/indexes/create \
+  -H "Authorization: Bearer my-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "space": "users",
+    "name": "idx_users_email",
+    "path": "email"
+  }'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "ok": true
+}
+```
+
+#### `POST /v1/json/indexes/drop`
+Drop a secondary index.
+
+**Request:**
+```bash
+curl -s -X POST http://127.0.0.1:4444/v1/json/indexes/drop \
+  -H "Authorization: Bearer my-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "space": "users",
+    "name": "idx_users_email"
+  }'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "ok": true,
+  "deleted": true
+}
+```
+
+#### `POST /v1/json/indexes/list`
+List all secondary indexes configured on a space.
+
+**Request:**
+```bash
+curl -s -X POST http://127.0.0.1:4444/v1/json/indexes/list \
+  -H "Authorization: Bearer my-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"space": "users"}'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "ok": true,
+  "indexes": [
+    {
+      "space": "users",
+      "index_name": "idx_users_email",
+      "json_path": "$.email"
+    }
+  ]
+}
+```
+
+#### `POST /v1/json/scan_by_index`
+Scan JSON documents matching a specific index value with keyset pagination.
+
+**Request:**
+```bash
+curl -s -X POST http://127.0.0.1:4444/v1/json/scan_by_index \
+  -H "Authorization: Bearer my-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "space": "users",
+    "index_name": "idx_users_role",
+    "value": "admin",
+    "limit": 10,
+    "after": null
+  }'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "ok": true,
+  "documents": [
+    {
+      "space": "users",
+      "id": "alice",
+      "value": {
+        "name": "Alice",
+        "role": "admin"
+      },
+      "version": "1"
+    }
+  ],
+  "count": 1
+}
+```
+
+#### `POST /v1/json/find`
+Find documents matching a query filter (e.g. `{"role": "admin"}`). If a secondary index exists matching one of the query fields, LiliaDB automatically accelerates the query using index lookups with cursor pagination and in-memory residual filtering; otherwise, it performs a document scan with filter matching.
+
+**Request:**
+```bash
+curl -s -X POST http://127.0.0.1:4444/v1/json/find \
+  -H "Authorization: Bearer my-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "space": "users",
+    "query": {
+      "role": "admin"
+    },
+    "limit": 10,
+    "after": null
+  }'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "ok": true,
+  "documents": [
+    {
+      "space": "users",
+      "id": "alice",
+      "value": {
+        "name": "Alice",
+        "role": "admin"
+      },
+      "version": "1"
+    }
+  ],
+  "count": 1
+}
+```
+
 ---
 
 ### Batch & Transactions

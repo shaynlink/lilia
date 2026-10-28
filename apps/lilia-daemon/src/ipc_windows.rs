@@ -346,6 +346,12 @@ impl UserSecurity {
                     if unsafe { CreateDirectoryW(encoded.as_ptr(), &raw const attributes) } == 0 {
                         return Err(io::Error::last_os_error());
                     }
+                    if let Some(parent) = current.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            lilia_core::windows_security::sync_directory(parent)?;
+                        }
+                    }
+                    lilia_core::windows_security::sync_directory(&current)?;
                     self.open(&current, false)?
                 }
                 Err(error) => return Err(error),
@@ -397,6 +403,7 @@ impl UserSecurity {
         drop(file);
         let token = written?;
         std::fs::rename(&temporary, &path)?;
+        lilia_core::windows_security::sync_directory(parent)?;
         Ok(Credentials {
             token,
             _parents: parents,

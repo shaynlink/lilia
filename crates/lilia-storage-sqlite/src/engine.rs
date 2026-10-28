@@ -387,11 +387,7 @@ impl Database {
         // Unlike rename on Unix, hard_link never replaces an existing destination.
         // Both names are on the same filesystem; only a complete snapshot becomes visible.
         std::fs::hard_link(&temporary, destination).map_err(backup_io)?;
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .map_err(backup_io)?
-            .sync_all()
-            .map_err(backup_io)?;
+        lilia_core::sync_directory(parent).map_err(backup_io)?;
         Ok(())
     }
 

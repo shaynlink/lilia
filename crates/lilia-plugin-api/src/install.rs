@@ -1,5 +1,3 @@
-#[cfg(unix)]
-use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -248,11 +246,7 @@ pub(crate) fn set_private_file(path: &Path) -> Result<(), PluginApiError> {
     Ok(())
 }
 
-#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 pub(crate) fn sync_directory(path: &Path) -> Result<(), PluginApiError> {
-    #[cfg(unix)]
-    File::open(path)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = path;
+    lilia_core::sync_directory(path)?;
     Ok(())
 }

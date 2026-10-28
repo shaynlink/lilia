@@ -118,6 +118,53 @@ class TestClient(unittest.TestCase):
         self.mock.set_response("/v1/json/delete", {"ok": True, "deleted": True})
         self.assertTrue(self.client.json.delete("users", "u1"))
 
+    def test_json_create_index(self):
+        self.mock.set_response("/v1/json/indexes/create", {"ok": True})
+        self.client.json.create_index("users", "email")
+        call = self.mock.calls[-1]
+        self.assertEqual(call["payload"]["space"], "users")
+        self.assertEqual(call["payload"]["name"], "email")
+        self.assertEqual(call["payload"]["path"], "$.email")
+
+    def test_json_drop_index(self):
+        self.mock.set_response("/v1/json/indexes/drop", {"ok": True, "deleted": True})
+        self.assertTrue(self.client.json.drop_index("users", "email"))
+
+    def test_json_list_indexes(self):
+        self.mock.set_response(
+            "/v1/json/indexes/list",
+            {
+                "ok": True,
+                "indexes": [
+                    {"space": "users", "index_name": "email", "json_path": "$.email"}
+                ],
+            },
+        )
+        indexes = self.client.json.list_indexes("users")
+        self.assertEqual(len(indexes), 1)
+        self.assertEqual(indexes[0].index_name, "email")
+        self.assertEqual(indexes[0].json_path, "$.email")
+
+    def test_json_find(self):
+        self.mock.set_response(
+            "/v1/json/find",
+            {
+                "ok": True,
+                "documents": [
+                    {
+                        "space": "users",
+                        "id": "u1",
+                        "value": {"name": "Alice", "role": "admin"},
+                        "version": "1",
+                    }
+                ],
+            },
+        )
+        docs = list(self.client.json.find("users", {"role": "admin"}))
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].id, "u1")
+        self.assertEqual(docs[0].value["role"], "admin")
+
     def test_sql_query(self):
         self.mock.set_response(
             "/v1/sql",
