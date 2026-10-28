@@ -18,6 +18,7 @@ import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const TARGET_MAP = {
   "aarch64-apple-darwin": {
@@ -79,7 +80,7 @@ function parseArgs() {
 }
 
 function main() {
-  const rootDir = resolve(new URL("..", import.meta.url).pathname);
+  const rootDir = fileURLToPath(new URL("..", import.meta.url));
   const { target, pack, dest, skipBuild } = parseArgs();
 
   const config = TARGET_MAP[target];

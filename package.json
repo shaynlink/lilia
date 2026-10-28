@@ -17,6 +17,7 @@
     "lilia": "cargo run -p lilia-cli --"
   },
   "devDependencies": {
+    "@msgpack/msgpack": "3.1.2",
     "@nx/js": "23.2.0",
     "nx": "23.2.0",
     "typescript": "6.0.2"

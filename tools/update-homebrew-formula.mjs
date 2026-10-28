@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -36,7 +37,7 @@ function computeSha256(filePath) {
 }
 
 function main() {
-  const rootDir = resolve(new URL("..", import.meta.url).pathname);
+  const rootDir = fileURLToPath(new URL("..", import.meta.url));
   const { version, releaseDir, formulaPath } = parseArgs();
 
   const fullFormulaPath = resolve(rootDir, formulaPath);

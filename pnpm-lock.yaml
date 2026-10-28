@@ -11,6 +11,9 @@ importers:
 
   .:
     devDependencies:
+      '@msgpack/msgpack':
+        specifier: 3.1.2
+        version: 3.1.2
       '@nx/js':
         specifier: 23.2.0
         version: 23.2.0(@babel/traverse@7.29.8)(nx@23.2.0)(supports-color@7.2.0)
