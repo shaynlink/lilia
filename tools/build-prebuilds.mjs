@@ -89,6 +89,9 @@ function main() {
     process.exit(1);
   }
 
+  const hostTarget = detectHostTarget();
+  const isCross = target !== hostTarget;
+
   // Locate output binary first
   const candidatePaths = [
     join(rootDir, "target", target, "release", config.libName),
@@ -105,8 +108,6 @@ function main() {
 
   if (!sourceLib && !skipBuild) {
     console.log(`=== Building LiliaDB prebuild for ${target} ===`);
-    const hostTarget = detectHostTarget();
-    const isCross = target !== hostTarget;
 
     // Build release binary
     const buildCmd = isCross

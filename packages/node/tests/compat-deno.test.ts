@@ -6,7 +6,7 @@ import { connect } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 
-import { Database } from "../src/index.ts";
+import { Database } from "../dist/index.js";
 
 // Universal test declaration for Deno test runner and Node test runner
 const runTest = typeof (globalThis as any).Deno !== "undefined"
