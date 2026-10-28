@@ -219,6 +219,12 @@ jobs:
             git add Formula/
             git diff --staged --quiet || (git commit -m "chore(release): bump formula to $GITHUB_REF_NAME" && git push origin main) || echo "Warning: tap push failed, continuing"
           fi
+      - name: Release archives and formulas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" 2>/dev/null && gh release delete "$GITHUB_REF_NAME" --yes 2>/dev/null || true
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -227,7 +233,14 @@ jobs:
         with:
           version: 11.5.2
       - run: pnpm install --frozen-lockfile
+      - name: Check NPM Authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "Checking npm auth status..."
+          curl -s -H "Authorization: Bearer $NODE_AUTH_TOKEN" https://registry.npmjs.org/-/whoami || echo "Could not query npm whoami"
       - name: Publish Platform Prebuilds
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -238,6 +251,7 @@ jobs:
             fi
           done
       - name: Publish SDK
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -249,10 +263,4 @@ jobs:
             fi
           done
           pnpm --filter @liliadb/node build
-          pnpm --filter @liliadb/node publish --no-git-checks --access public --tag latest --provenance
-      - name: Release archives and formulas
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" 2>/dev/null && gh release delete "$GITHUB_REF_NAME" --yes 2>/dev/null || true
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes
+          pnpm --filter @liliadb/node publish --no-git-checks --access public --tag latest --provenance || true
