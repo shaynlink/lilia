@@ -167,21 +167,21 @@ jobs:
       - run: cargo build --target ${{ matrix.target }} -p lilia-node-native -p lilia-cli -p lilia-daemon -p lilia-mcp --release
       - name: Build and stage prebuild package
         shell: bash
-        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --skip-build --dest "$GITHUB_WORKSPACE/release"
+        run: node tools/build-prebuilds.mjs --target "${{ matrix.target }}" --pack --skip-build --dest release
       - name: Archive standalone CLI and Daemon binaries
         shell: bash
         run: |
-          mkdir -p bin-archive
+          mkdir -p bin-archive release
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp "target/${{ matrix.target }}/release/lilia.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia.exe" bin-archive/
             cp "target/${{ matrix.target }}/release/lilia-daemon.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia-daemon.exe" bin-archive/
             cp "target/${{ matrix.target }}/release/lilia-mcp.exe" bin-archive/ 2>/dev/null || cp "target/release/lilia-mcp.exe" bin-archive/
-            tar -czf "$GITHUB_WORKSPACE/release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
+            tar -czf "release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
           else
             cp "target/${{ matrix.target }}/release/lilia" bin-archive/ 2>/dev/null || cp "target/release/lilia" bin-archive/
             cp "target/${{ matrix.target }}/release/lilia-daemon" bin-archive/ 2>/dev/null || cp "target/release/lilia-daemon" bin-archive/
             cp "target/${{ matrix.target }}/release/lilia-mcp" bin-archive/ 2>/dev/null || cp "target/release/lilia-mcp" bin-archive/
-            tar -czf "$GITHUB_WORKSPACE/release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
+            tar -czf "release/lilia-${{ matrix.artifact }}.tar.gz" -C bin-archive .
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -217,7 +217,7 @@ jobs:
             cp Formula/liliadb.rb /tmp/tap-sync/Formula/liliadb.rb
             cd /tmp/tap-sync
             git add Formula/
-            git diff --staged --quiet || (git commit -m "chore(release): bump formula to $GITHUB_REF_NAME" && git push origin main)
+            git diff --staged --quiet || (git commit -m "chore(release): bump formula to $GITHUB_REF_NAME" && git push origin main) || echo "Warning: tap push failed, continuing"
           fi
       - uses: actions/setup-node@v4
         with:
