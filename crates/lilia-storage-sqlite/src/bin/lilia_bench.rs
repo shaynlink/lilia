@@ -35,6 +35,10 @@ struct Arguments {
     #[arg(long, default_value = "durable")]
     durability: String,
 
+    /// Include raw `SQLite` native (C / rusqlite) baseline
+    #[arg(long)]
+    raw_sqlite: bool,
+
     /// Output results as JSON
     #[arg(long)]
     json: bool,
@@ -174,6 +178,129 @@ fn run_single_benchmark(
     })
 }
 
+fn run_raw_sqlite_benchmark(
+    durability_name: &str,
+    synchronous: &str,
+    count: usize,
+    batch_size: usize,
+) -> Result<BenchMetrics, Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let db_path: PathBuf = temp_dir.path().join("bench_raw.db");
+
+    let mut conn = rusqlite::Connection::open(&db_path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", synchronous)?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    conn.pragma_update(None, "cache_size", -65536)?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS _lilia_kv(
+           namespace TEXT NOT NULL,
+           key BLOB NOT NULL,
+           value BLOB NOT NULL,
+           version INTEGER NOT NULL CHECK(version > 0),
+           expires_at_ms INTEGER,
+           PRIMARY KEY(namespace,key)
+         ) STRICT, WITHOUT ROWID;",
+    )?;
+
+    // 1. Warmup phase (300 mutations)
+    let payload = vec![42u8; 256];
+    let num_warmup_batches = 300usize.div_ceil(batch_size.max(1));
+    let mut w_generated = 0;
+    for b in 0..num_warmup_batches {
+        let chunk_size = (300 - w_generated).min(batch_size);
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO _lilia_kv(namespace,key,value,version,expires_at_ms) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value,version=excluded.version,expires_at_ms=excluded.expires_at_ms",
+            )?;
+            for i in 0..chunk_size {
+                let id = b * batch_size + i;
+                let key = format!("k_{id}").into_bytes();
+                stmt.execute(rusqlite::params!["warmup", key, payload, 1i64, None::<i64>])?;
+            }
+        }
+        tx.commit()?;
+        w_generated += chunk_size;
+    }
+
+    // 2. Timed benchmark phase
+    let num_batches = count.div_ceil(batch_size.max(1));
+    let mut batch_latencies_us = Vec::with_capacity(num_batches);
+
+    let start_all = Instant::now();
+    let mut generated = 0;
+
+    for b in 0..num_batches {
+        let current_batch_size = (count - generated).min(batch_size);
+        let batch_start = Instant::now();
+
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO _lilia_kv(namespace,key,value,version,expires_at_ms) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value,version=excluded.version,expires_at_ms=excluded.expires_at_ms",
+            )?;
+            for i in 0..current_batch_size {
+                let id = b * batch_size + i;
+                let key = format!("bench_key_{id:08}").into_bytes();
+                let val = vec![(id % 256) as u8; 256];
+                stmt.execute(rusqlite::params!["bench", key, val, 1i64, None::<i64>])?;
+            }
+        }
+        tx.commit()?;
+
+        let elapsed = batch_start.elapsed();
+        let op_latency_us = (elapsed.as_nanos() as f64) / (current_batch_size as f64 * 1_000.0);
+        batch_latencies_us.push(op_latency_us);
+        generated += current_batch_size;
+    }
+
+    let total_duration = start_all.elapsed();
+    let total_duration_ms = total_duration.as_secs_f64() * 1_000.0;
+    let throughput_ops_sec = (count as f64) / total_duration.as_secs_f64();
+
+    batch_latencies_us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p50_us = percentile(&batch_latencies_us, 50.0);
+    let p95_us = percentile(&batch_latencies_us, 95.0);
+    let p99_us = percentile(&batch_latencies_us, 99.0);
+    let min_us = *batch_latencies_us.first().unwrap_or(&0.0);
+    let max_us = *batch_latencies_us.last().unwrap_or(&0.0);
+
+    let sum: f64 = batch_latencies_us.iter().sum();
+    let mean_us = sum / batch_latencies_us.len() as f64;
+    let variance: f64 = batch_latencies_us
+        .iter()
+        .map(|v| (v - mean_us).powi(2))
+        .sum::<f64>()
+        / batch_latencies_us.len() as f64;
+    let stddev_us = variance.sqrt();
+
+    drop(conn);
+    let disk_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+    Ok(BenchMetrics {
+        surface: "SQLite Native (C / Rusqlite)".into(),
+        codec: "cleartext".into(),
+        durability: durability_name.into(),
+        total_mutations: count,
+        batch_size,
+        total_duration_ms,
+        throughput_ops_sec,
+        p50_us,
+        p95_us,
+        p99_us,
+        mean_us,
+        min_us,
+        max_us,
+        stddev_us,
+        disk_bytes,
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Arguments::parse();
 
@@ -183,10 +310,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => Durability::Durable,
     };
 
+    let synchronous = match durability {
+        Durability::Durable => "FULL",
+        Durability::Balanced => "NORMAL",
+        Durability::Performance => "OFF",
+    };
+
     let run_clear = args.codec == "clear" || args.codec == "both";
     let run_aes = args.codec == "aes256" || args.codec == "both";
 
     let mut results = Vec::new();
+
+    if args.raw_sqlite {
+        let metrics =
+            run_raw_sqlite_benchmark(&args.durability, synchronous, args.count, args.batch_size)?;
+        results.push(metrics);
+    }
 
     if run_clear {
         let metrics = run_single_benchmark(

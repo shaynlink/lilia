@@ -12,13 +12,13 @@ transaction boundary, with embedded Rust, Node.js, Bun, Deno, Python, CLI, and M
 
 ---
 
-## Status: v0.1.0-alpha.2
+## Status: v0.1.0-alpha.4
 
-This repository contains the `0.1.0-alpha.2` release featuring:
+This repository contains the `0.1.0-alpha.4` release featuring:
 - **Global Package Manager Distribution**:
-  - **Homebrew Formula** (`Formula/liliadb.rb`, `Formula/lilia.rb`) for macOS and Linux with daemon background service support (`brew services`).
-  - **Official PyPI Package** (`pip install liliadb`) with automated Trusted Publishing (OIDC).
-  - **Universal npm SDK** (`@liliadb/node`) supporting Node.js (>=22), Bun (>=1.0), and Deno (>=2.0).
+  - **Official Homebrew Tap** (`brew tap liliadb/tap && brew install lilia`) with daemon background service support (`brew services start liliadb`).
+  - **Official PyPI Package** (`pip install liliadb`) with automated Trusted Publishing (OIDC) and zero external dependencies.
+  - **Universal npm SDK** (`@liliadb/node`) supporting Node.js (>=22), Bun (>=1.0), and Deno (>=2.0) with multi-platform prebuilds (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-x64`).
 - **Real-Time CDC & Live Event Streaming**: Sub-millisecond reactive subscriptions via `db.watch()` in Node/Bun/Deno, `client.watch()` in Python, and Server-Sent Events (`/v1/watch` SSE) over HTTP.
 - **Graph & Full-Text Search (FTS5)**: Embedded graph traversal (`setNode`, `addEdge`, `neighbors`, `reachability`) and BM25-ranked full-text search with highlighting and snippets across all entry points.
 - **Encryption at Rest**: Native authenticated encryption (AES-256-GCM AEAD) via `plugins/lilia-plugin-codec`, ensuring zero plaintext is stored on disk or in WAL frames, with transparent decryption across KV, JSON, and SQL views.
@@ -37,11 +37,11 @@ Install the standalone CLI (`lilia`), Daemon (`lilia-daemon`), and MCP server (`
 
 ```bash
 # Add the official tap and install
-brew tap shaynlink/lilia
+brew tap liliadb/tap
 brew install lilia
 
 # Or run the daemon as a background service
-brew services start lilia
+brew services start liliadb
 ```
 
 ### 2. Python (PyPI)
@@ -268,7 +268,7 @@ Read the full report in [Official Performance Benchmarks](docs/benchmarks.md).
 - `Formula/`: Homebrew packaging (`Formula/liliadb.rb`, `Formula/lilia.rb`).
 - `examples/`: Runnable examples for Node.js, Bun, Python, and native Rust.
 
-Documentation: [Architecture](docs/architecture.md) | [HTTP REST API](docs/http_api.md) | [Python SDK](docs/python_sdk.md) | [Benchmarks](docs/benchmarks.md) | [Plugins](docs/plugins.md) | [Security Policy](SECURITY.md)
+Documentation: [Architecture](docs/architecture.md) | [Node.js SDK](docs/node_sdk.md) | [Python SDK](docs/python_sdk.md) | [HTTP REST API](docs/http_api.md) | [Benchmarks](docs/benchmarks.md) | [Plugins](docs/plugins.md) | [Security Policy](SECURITY.md)
 
 ---
 

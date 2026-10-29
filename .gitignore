@@ -29,11 +29,12 @@ release/
 *.ready
 *.confirmed
 
-# OS artifacts
+# OS and runtime artifacts
 .DS_Store
 Thumbs.db
 *.swp
 *~
+deno.lock
 
 # Python artifacts
 __pycache__/

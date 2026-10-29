@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-cli"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-core"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "aes-gcm",
  "rand",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-daemon"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-graph"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-core",
  "lilia-storage-sqlite",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-mcp"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -1026,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-node-native"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-core",
  "lilia-storage-sqlite",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-plugin-api"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-plugin-codec"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1074,28 +1074,28 @@ dependencies = [
 
 [[package]]
 name = "lilia-plugin-json"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-plugin-api",
 ]
 
 [[package]]
 name = "lilia-plugin-kv"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-plugin-api",
 ]
 
 [[package]]
 name = "lilia-plugin-sql"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-plugin-api",
 ]
 
 [[package]]
 name = "lilia-protocol"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "lilia-core",
  "rmp-serde",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "lilia-storage-sqlite"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64",
  "clap",

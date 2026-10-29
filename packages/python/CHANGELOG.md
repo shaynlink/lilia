@@ -4,6 +4,23 @@ All notable changes to the `liliadb` Python SDK will be documented in this file.
 
 ---
 
+## [0.1.0a4] - 2026-10-29
+
+### Changed
+- Comprehensive documentation update covering Graph, FTS5, secondary indexes, and live CDC watch streams.
+- Harmonized default HTTP gateway port to `4444`.
+
+---
+
+## [0.1.0a3] - 2026-10-28
+
+### Added
+- **Packaging & Publishing Hardening**:
+  - Dual PyPI authentication support (OIDC Trusted Publishing and API token fallback).
+  - Enhanced integration test suite verifying health, doctor, batch, secondary indexing, and live SSE watch.
+
+---
+
 ## [0.1.0a2] - 2026-10-27
 
 ### Added

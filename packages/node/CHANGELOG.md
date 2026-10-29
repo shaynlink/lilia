@@ -4,6 +4,25 @@ All notable changes to the `@liliadb/node` SDK will be documented in this file.
 
 ---
 
+## [0.1.0-alpha.4] - 2026-10-29
+
+### Changed
+- Comprehensive documentation synchronization with dedicated `docs/node_sdk.md`.
+- Workspace cleanup, telemetry disabling, and Homebrew tap formula path alignment.
+
+---
+
+## [0.1.0-alpha.3] - 2026-10-28
+
+### Added
+- **Multi-Platform Prebuilds**:
+  - Direct npm publication of multi-platform native tarball prebuilds for macOS (arm64/x64), Linux (arm64/x64), and Windows MSVC.
+  - Native Deno 2 auto node_modules resolution via `deno.json`.
+- **Packaging Hardening**:
+  - Automatic prebuild artifact packaging via `tools/build-prebuilds.mjs`.
+
+---
+
 ## [0.1.0-alpha.2] - 2026-10-27
 
 ### Added

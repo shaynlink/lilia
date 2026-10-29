@@ -1,25 +1,25 @@
 class Lilia < Formula
   desc "Local-first multimodel embedded and daemon database (CLI, Daemon & MCP)"
   homepage "https://liliadb.org"
-  version "0.1.0-alpha.3"
+  version "0.1.0-alpha.4"
   license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/shaynlink/liliadb/releases/download/v#{version}/lilia-darwin-arm64.tar.gz"
+      url "https://github.com/shaynlink/lilia/releases/download/v#{version}/lilia-darwin-arm64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000001"
     else
-      url "https://github.com/shaynlink/liliadb/releases/download/v#{version}/lilia-darwin-x64.tar.gz"
+      url "https://github.com/shaynlink/lilia/releases/download/v#{version}/lilia-darwin-x64.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000002"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/shaynlink/liliadb/releases/download/v#{version}/lilia-linux-arm64-gnu.tar.gz"
+      url "https://github.com/shaynlink/lilia/releases/download/v#{version}/lilia-linux-arm64-gnu.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000003"
     else
-      url "https://github.com/shaynlink/liliadb/releases/download/v#{version}/lilia-linux-x64-gnu.tar.gz"
+      url "https://github.com/shaynlink/lilia/releases/download/v#{version}/lilia-linux-x64-gnu.tar.gz"
       sha256 "0000000000000000000000000000000000000000000000000000000000000004"
     end
   end

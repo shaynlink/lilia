@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-alpha.4] - 2026-10-29
+
+### Fixed
+- **Homebrew Formula URL Alignment**:
+  - Corrected archive download URLs in `Formula/lilia.rb` to point to official repository `https://github.com/shaynlink/lilia`.
+  - Harmonized tap instructions to `brew tap liliadb/tap && brew install lilia`.
+
+### Added
+- **Exhaustive Documentation**:
+  - Completed HTTP REST API specification (`docs/http_api.md`) with full endpoints documentation for Graph (`/v1/graph/*`), FTS5 (`/v1/fts/*`), and real-time Change Data Capture SSE streams (`/v1/watch`).
+  - Completed Python SDK reference (`docs/python_sdk.md`) with Graph (`client.graph`), FTS5 (`client.fts`), and dynamic JSON secondary indexing (`client.json.create_index`).
+  - Added dedicated comprehensive Node.js SDK documentation (`docs/node_sdk.md`) covering embedded and daemon modes, streaming, OCC, and cross-runtime compatibility.
+
+### Changed
+- **Workspace & CI Hygiene**:
+  - Disabled telemetry in Nx workspace configuration to eliminate interactive CLI prompts in CI.
+  - Purged stale alpha.2 build artifacts and verified 100% test pass rate across Rust, Node, and Python test suites.
+
+---
+
 ## [0.1.0-alpha.3] - 2026-10-28
 
 ### Added

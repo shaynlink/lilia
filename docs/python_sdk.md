@@ -6,12 +6,13 @@ Official zero-dependency Python SDK for LiliaDB, built for high performance, AI 
 
 ## 1. Key Features
 
-- **Zero Dependencies**: Pure Python 3.9+ using standard library modules (`urllib.request`, `json`). No heavy external dependencies like `requests`, `aiohttp`, or `httpx` required.
-- **Multi-Model**: Key/Value store with TTL, JSON document store, and SQL queries over documents in a single unified client.
+- **Zero Dependencies**: Pure Python 3.9+ using standard library modules (`urllib.request`, `json`, `threading`). No external dependencies like `requests`, `aiohttp`, or `httpx` required.
+- **Multimodel Engine**: Key/Value store with TTL, JSON document store with secondary indexing, embedded Graph traversal, Full-Text Search (FTS5), and SQL analytics in a single unified client.
+- **Real-Time CDC**: Live change subscriptions via `client.watch()` with background thread callbacks or synchronous Python generators.
 - **Optimistic Concurrency Control (OCC)**: Enforce version checks (`if_version`) to eliminate race conditions without distributed locks.
 - **Transparent Keyset Streaming**: Auto-paginating Python generators for KV and JSON scans (`for doc in client.json.scan(...)`).
-- **Dict-Ready SQL Analytics**: Query structured views (`lilia_json`) and project rows directly into Python dictionaries with `result.to_dicts()`.
-- **Atomic Multi-Model Transactions**: Apply KV mutations and JSON documents atomically in a single ACID batch.
+- **Dict-Ready SQL Analytics**: Query structured views (`lilia_json`, `lilia_kv`) and project rows directly into Python dictionaries with `result.to_dicts()`.
+- **Atomic Multi-Model Transactions**: Apply KV mutations, JSON documents, graph edges, and search indexes atomically in a single ACID batch.
 
 ---
 
@@ -28,7 +29,6 @@ Or install from the local repository for development:
 ```bash
 pip install -e packages/python
 ```
-
 
 ---
 
@@ -77,7 +77,7 @@ from liliadb import LiliaClient
 client = LiliaClient(
     endpoint="http://127.0.0.1:4444",
     token="your-bearer-token",
-    timeout=10.0,  # Request timeout in seconds (default: 10.0)
+    token_file="/path/to/token",  # Optional: read token from file
 )
 ```
 
@@ -168,11 +168,116 @@ for item in client.json.scan("inventory", limit=20):
     print(f"[{item.id}] {item.value['title']}")
 ```
 
+#### Dynamic Secondary Indexing (`client.json.create_index`, `find`, etc.)
+Accelerate queries over JSON fields and nested paths with automatic index backfilling and multikey array support:
+
+```python
+# Create index on field or path
+client.json.create_index("inventory", "tags")
+client.json.create_index("inventory", "price", name="idx_inv_price")
+
+# List existing indexes
+indexes = client.json.list_indexes("inventory")
+for idx in indexes:
+    print(idx.name, idx.field_path)
+
+# Query documents (accelerated by secondary index when available, fallback to scan)
+matching = client.json.find("inventory", {"tags": "hardware"}, limit=10)
+for doc in matching:
+    print(doc.id, doc.value)
+
+# Auto-paginating generator over query matches
+for doc in client.json.find("inventory", {"tags": "hardware"}, auto_paginate=True):
+    print(doc.id, doc.value)
+
+# Drop an index
+client.json.drop_index("inventory", "idx_inv_price")
+```
+
+---
+
+### Embedded Graph Engine (`client.graph`)
+
+LiliaDB provides a native directed graph engine embedded alongside your KV and JSON collections.
+
+#### Nodes
+```python
+# Create or update nodes with labels and structured metadata
+client.graph.set_node("org_chart", "u1", "Employee", {"name": "Alice", "title": "Staff Engineer"})
+client.graph.set_node("org_chart", "u2", "Employee", {"name": "Bob", "title": "VP Engineering"})
+
+# Delete a node and its incident edges
+client.graph.delete_node("org_chart", "u1")
+```
+
+#### Edges
+```python
+# Create directed edge
+client.graph.add_edge("org_chart", "u1", "u2", "REPORTS_TO")
+
+# Remove directed edge
+client.graph.remove_edge("org_chart", "u1", "u2", "REPORTS_TO")
+```
+
+#### Traversal & Reachability
+```python
+# Find immediate neighbors (direction: "outgoing" | "incoming" | "both")
+managers = client.graph.neighbors("org_chart", "u1", direction="outgoing", kind="REPORTS_TO")
+
+# Transitive reachability traversal
+reachable = client.graph.reachability("org_chart", start_nodes=["u1"], direction="outgoing")
+```
+
+---
+
+### Full-Text Search (`client.fts`)
+
+Integrated SQLite FTS5 engine with BM25 ranking, highlighting, and snippet generation.
+
+```python
+# Index documents into a search collection
+client.fts.index("kb", "doc_101", "LiliaDB delivers local-first multimodel embedded database storage.")
+client.fts.index("kb", "doc_102", "SQLite WAL mode enables high concurrency and ACID guarantees.")
+
+# Search collection
+hits = client.fts.search("kb", "multimodel SQLite", limit=5)
+for hit in hits:
+    print(f"Doc: {hit.doc_id} | Score: {hit.rank:.3f} | Snippet: {hit.snippet}")
+
+# Remove document from index
+client.fts.delete("kb", "doc_101")
+```
+
+---
+
+### Real-Time CDC & Live Event Subscriptions (`client.watch`)
+
+Subscribe to live change events in real time with namespace filtering via Server-Sent Events (SSE).
+
+#### Asynchronous Callback (Threaded)
+```python
+def on_event(event):
+    print(f"CDC Event: {event.type} in {event.namespace or event.space} | ID: {event.id or event.key}")
+
+# Use as a context manager for automatic cleanup
+with client.watch(namespace="orders", callback=on_event) as sub:
+    client.json.put("orders", "ord_100", {"customer": "Alice", "status": "paid"})
+    # sub.stop() or sub.unsubscribe() called on exit
+```
+
+#### Synchronous Generator
+```python
+# Iterate over live mutations as a stream
+for event in client.watch(namespace="orders"):
+    print("Received event:", event.type, event.id, event.deleted)
+    break
+```
+
 ---
 
 ### Multi-Model Batch Transactions (`client.batch`)
 
-Executes multiple Key/Value and JSON mutations in an atomic transaction:
+Executes multiple Key/Value, JSON, Graph, and FTS operations atomically in a single ACID commit:
 
 ```python
 results = client.batch([
@@ -187,6 +292,19 @@ results = client.batch([
         "space": "inventory",
         "id": "item_101",
         "value": {"title": "Mouse", "price": 29.90}
+    },
+    {
+        "type": "graph_set_node",
+        "graph": "inventory_graph",
+        "id": "item_101",
+        "kind": "Item",
+        "metadata": {"price": 29.90}
+    },
+    {
+        "type": "fts_index",
+        "collection": "inventory_kb",
+        "doc_id": "item_101",
+        "content": "Optical USB-C Gaming Mouse"
     }
 ])
 
@@ -198,7 +316,7 @@ for res in results:
 
 ### SQL Analytics (`client.sql`)
 
-Executes SQLite SQL queries against LiliaDB's structured views (`lilia_json`, `lilia_kv`, etc.):
+Executes SQLite SQL queries against LiliaDB's structured views (`lilia_json`, `lilia_kv`, `lilia_graph_nodes`, `lilia_graph_edges`):
 
 ```python
 query = """
@@ -238,10 +356,10 @@ health = client.health()  # {'ok': True, 'status': 'running'}
 is_healthy = client.doctor()  # True
 
 # Online atomic backup snapshot
-backup_info = client.backup("/path/to/backup.lilia")
+backup_ok = client.backup("/path/to/backup.lilia")
 
 # Graceful daemon shutdown
-client.shutdown()
+# (requires authentication)
 ```
 
 ---
@@ -276,26 +394,6 @@ except LiliaError as exc:
 
 ---
 
-### Real-Time CDC & Live Event Subscriptions
-
-Subscribe to live change events in real time with namespace filtering using context manager or generator:
-
-```python
-# Threaded callback subscription
-def on_event(event):
-    print(f"CDC Event: {event.type} in {event.namespace or event.space} | ID: {event.id or event.key}")
-
-with client.watch(namespace="orders", callback=on_event) as sub:
-    client.json.put("orders", "ord_100", {"customer": "Alice", "status": "paid"})
-
-# Or consume as a Python generator
-for event in client.watch(namespace="orders"):
-    print("Received event:", event)
-    break
-```
-
----
-
 ## 6. Runnable Examples
 
 See the [`examples/python/`](file:///Users/shayn/Development/liliadb/examples/python) directory for complete scripts:
@@ -304,4 +402,3 @@ See the [`examples/python/`](file:///Users/shayn/Development/liliadb/examples/py
 - `03_sql_analytics.py`: SQL analytics and aggregations over JSON collections.
 - `04_ai_agent_memory.py`: Conversational memory and session persistence for AI agents.
 - `05_cdc_live_events.py`: Real-time CDC change stream subscriptions and reactive cache sync.
-

@@ -4,7 +4,7 @@
 **Platform**: Darwin 25.6.0 (arm64)  
 **CPU**: Apple M3 Max (14 cores)  
 **Node.js**: v26.5.0  
-**Engine**: LiliaDB v0.1.0-alpha.2 (SQLite engine, WAL, Durability::Durable)
+**Engine**: LiliaDB v0.1.0-alpha.2 - v0.1.0-alpha.4 (SQLite engine, WAL, Durability::Durable)
 
 ---
 
