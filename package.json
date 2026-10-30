@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@msgpack/msgpack": "3.1.2",
-    "@nx/js": "23.2.0",
+    "@nx/js": "23.2.1",
     "better-sqlite3": "^13.0.3",
     "nx": "23.2.1",
     "typescript": "6.0.2"
