@@ -5,6 +5,7 @@ overrides:
   smol-toml: 1.7.1
 
 allowBuilds:
+  better-sqlite3: true
   nx: true
 
 onlyBuiltDependencies:

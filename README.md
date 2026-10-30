@@ -247,7 +247,7 @@ Calibrated throughput and latency distributions measured on Apple M3 Max (14 cor
 | **Rust Native Bulk Ingest** | 100,000 | 500 | **281,016 ops/s** | 3.20 µs | 5.33 µs |
 | **Daemon via HTTP Bulk Ingest** | 100,000 | 500 | **171,051 ops/s** | 5.42 µs | 7.81 µs |
 
-Read the full report in [Official Performance Benchmarks](docs/benchmarks.md).
+Read the full report in [Official Performance Benchmarks](docs/benchmarks.md) and the [Comparative Benchmark: LiliaDB vs Native SQLite & Ecosystems](docs/benchmarks_comparison.md).
 
 ---
 
@@ -268,7 +268,7 @@ Read the full report in [Official Performance Benchmarks](docs/benchmarks.md).
 - `Formula/`: Homebrew packaging (`Formula/liliadb.rb`, `Formula/lilia.rb`).
 - `examples/`: Runnable examples for Node.js, Bun, Python, and native Rust.
 
-Documentation: [Architecture](docs/architecture.md) | [Node.js SDK](docs/node_sdk.md) | [Python SDK](docs/python_sdk.md) | [HTTP REST API](docs/http_api.md) | [Benchmarks](docs/benchmarks.md) | [Plugins](docs/plugins.md) | [Security Policy](SECURITY.md)
+Documentation: [Architecture](docs/architecture.md) | [Node.js SDK](docs/node_sdk.md) | [Python SDK](docs/python_sdk.md) | [HTTP REST API](docs/http_api.md) | [Benchmarks](docs/benchmarks.md) | [Comparative Benchmarks](docs/benchmarks_comparison.md) | [Plugins](docs/plugins.md) | [Security Policy](SECURITY.md)
 
 ---
 

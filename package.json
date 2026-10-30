@@ -12,6 +12,7 @@
     "test": "nx run-many -t test",
     "lint": "nx run-many -t lint",
     "bench": "nx run-many -t bench",
+    "bench:compare": "node tools/benchmarks/run_comparative_suite.mjs --workload all",
     "graph": "nx graph",
     "prebuild": "node ./tools/build-prebuilds.mjs",
     "lilia": "cargo run -p lilia-cli --"
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@msgpack/msgpack": "3.1.2",
     "@nx/js": "23.2.0",
+    "better-sqlite3": "^13.0.3",
     "nx": "23.2.0",
     "typescript": "6.0.2"
   }
