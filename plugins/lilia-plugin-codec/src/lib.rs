@@ -91,8 +91,7 @@ pub unsafe extern "C" fn codec_encode(
         unsafe { std::slice::from_raw_parts(input, input_len) }
     };
 
-    let mut nonce_bytes = [0u8; 12];
-    rand::Rng::fill(&mut rand::rng(), &mut nonce_bytes);
+    let nonce_bytes: [u8; 12] = rand::random();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let Ok(ciphertext) = cipher.encrypt(nonce, in_slice) else {

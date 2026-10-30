@@ -12,6 +12,7 @@ sqlite-errors = ["dep:rusqlite"]
 
 [dependencies]
 aes-gcm.workspace = true
+pbkdf2.workspace = true
 rand.workspace = true
 rusqlite = { workspace = true, optional = true }
 serde.workspace = true

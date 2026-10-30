@@ -66,9 +66,15 @@ impl Aes256GcmCodec {
 
     #[must_use]
     pub fn from_passphrase(passphrase: &str) -> Self {
-        use sha2::{Digest, Sha256};
-        let hash = Sha256::digest(passphrase.as_bytes());
-        Self::from_key(hash.into())
+        use sha2::Sha256;
+        let mut key = [0u8; 32];
+        pbkdf2::pbkdf2_hmac::<Sha256>(
+            passphrase.as_bytes(),
+            b"liliadb:key-derivation:v1",
+            100_000,
+            &mut key,
+        );
+        Self::from_key(key)
     }
 }
 
@@ -82,8 +88,7 @@ impl ValueCodec for Aes256GcmCodec {
         use crate::{ErrorCode, LiliaError};
         use aes_gcm::aead::Aead;
 
-        let mut nonce_bytes = [0u8; Self::NONCE_LEN];
-        rand::Rng::fill(&mut rand::rng(), &mut nonce_bytes);
+        let nonce_bytes: [u8; Self::NONCE_LEN] = rand::random();
         let nonce = aes_gcm::Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = self.cipher.encrypt(nonce, plaintext).map_err(|e| {

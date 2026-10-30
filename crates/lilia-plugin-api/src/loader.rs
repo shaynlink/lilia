@@ -131,22 +131,23 @@ fn validate_descriptor(
         ));
     }
     if manifest.capabilities.contains(&crate::Capability::Codec) {
-        if descriptor.codec.is_null() {
+        let Some(codec) = (unsafe { descriptor.codec.as_ref() }) else {
             return Err(PluginApiError::Invalid(
                 "plugin declares codec capability but descriptor.codec is null".into(),
             ));
-        }
-        let codec = unsafe { &*descriptor.codec };
+        };
         if codec.encode.is_none() || codec.decode.is_none() {
             return Err(PluginApiError::Invalid(
                 "codec descriptor is missing encode or decode function".into(),
             ));
         }
     }
-    if manifest.capabilities.contains(&crate::Capability::Sql) && descriptor.sql.is_null() {
-        return Err(PluginApiError::Invalid(
-            "plugin declares sql capability but descriptor.sql is null".into(),
-        ));
+    if manifest.capabilities.contains(&crate::Capability::Sql) {
+        let Some(_sql) = (unsafe { descriptor.sql.as_ref() }) else {
+            return Err(PluginApiError::Invalid(
+                "plugin declares sql capability but descriptor.sql is null".into(),
+            ));
+        };
     }
     Ok(name)
 }
@@ -154,10 +155,7 @@ fn validate_descriptor(
 impl LoadedPlugin {
     #[must_use]
     pub fn codec(&self) -> Option<PluginCodec> {
-        if self.descriptor.codec.is_null() {
-            return None;
-        }
-        let desc = unsafe { *self.descriptor.codec };
+        let desc = unsafe { self.descriptor.codec.as_ref().copied() }?;
         let codec_name = if desc.name.is_null() {
             self.name.clone()
         } else {
@@ -175,10 +173,7 @@ impl LoadedPlugin {
 
     #[must_use]
     pub fn sql(&self) -> Option<PluginSql> {
-        if self.descriptor.sql.is_null() {
-            return None;
-        }
-        let desc = unsafe { *self.descriptor.sql };
+        let desc = unsafe { self.descriptor.sql.as_ref().copied() }?;
         let sql_name = if desc.name.is_null() {
             self.name.clone()
         } else {

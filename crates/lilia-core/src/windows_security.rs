@@ -292,9 +292,9 @@ pub fn is_private_dacl(path: &Path) -> io::Result<bool> {
         }
 
         // Must have a valid DACL
-        if dacl.is_null() {
+        let Some(acl) = dacl.as_ref() else {
             return Ok(false);
-        }
+        };
 
         let sid_str = current_user_sid()?;
         let encoded_sid = wide(OsStr::new(&sid_str))?;
@@ -308,7 +308,6 @@ pub fn is_private_dacl(path: &Path) -> io::Result<bool> {
             return Ok(false);
         }
 
-        let acl = &*dacl;
         if acl.AceCount == 0 {
             return Ok(false);
         }
@@ -318,11 +317,15 @@ pub fn is_private_dacl(path: &Path) -> io::Result<bool> {
             if GetAce(dacl, u32::from(i), &raw mut ace) == 0 {
                 return Err(io::Error::last_os_error());
             }
-            let header = &*ace.cast::<ACE_HEADER>();
+            let Some(header) = ace.cast::<ACE_HEADER>().as_ref() else {
+                return Ok(false);
+            };
             if header.AceType != 0 {
                 return Ok(false);
             }
-            let allowed_ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+            let Some(allowed_ace) = ace.cast::<ACCESS_ALLOWED_ACE>().as_ref() else {
+                return Ok(false);
+            };
             let ace_sid = (&raw const allowed_ace.SidStart).cast_mut().cast();
             if EqualSid(ace_sid, expected_sid) == 0 {
                 return Ok(false);

@@ -889,7 +889,17 @@ async fn batch_handler(
     State(state): State<HttpState>,
     Json(payload): Json<BatchRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let mut ops = Vec::with_capacity(payload.operations.len());
+    const MAX_BATCH_OPERATIONS: usize = 10_000;
+    if payload.operations.len() > MAX_BATCH_OPERATIONS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": format!("Batch operations count ({}) exceeds maximum limit of {MAX_BATCH_OPERATIONS}", payload.operations.len())
+            })),
+        ));
+    }
+    let mut ops = Vec::with_capacity(payload.operations.len().min(1024));
     for op in payload.operations {
         match op {
             HttpBatchOperation::KvSet {
