@@ -899,7 +899,7 @@ async fn batch_handler(
             })),
         ));
     }
-    let mut ops = Vec::with_capacity(payload.operations.len().min(1024));
+    let mut ops = Vec::new();
     for op in payload.operations {
         match op {
             HttpBatchOperation::KvSet {

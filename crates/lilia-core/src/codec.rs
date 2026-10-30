@@ -67,7 +67,7 @@ impl Aes256GcmCodec {
     #[must_use]
     pub fn from_passphrase(passphrase: &str) -> Self {
         use sha2::Sha256;
-        let mut key = [0u8; 32];
+        let mut key: [u8; 32] = rand::random();
         pbkdf2::pbkdf2_hmac::<Sha256>(
             passphrase.as_bytes(),
             b"liliadb:key-derivation:v1",
